@@ -15,6 +15,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ results });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Search failed";
+    const stack = error instanceof Error ? error.stack : undefined;
+    console.error("[/api/search] Error:", message, stack);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -161,6 +161,8 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Screening failed";
+    const stack = error instanceof Error ? error.stack : undefined;
+    console.error("[/api/screen] Error:", message, stack);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

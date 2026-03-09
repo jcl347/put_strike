@@ -13,9 +13,25 @@
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import YahooFinance from "yahoo-finance2";
+import YahooFinanceModule from "yahoo-finance2";
 
-const yahooFinance = new (YahooFinance as any)({ suppressNotices: ["yahooSurvey"] });
+// yahoo-finance2 v3 requires `new YahooFinance()`.
+// ESM/CJS interop on Vercel can resolve the default export differently,
+// so we handle both cases: the import may be the class directly,
+// or it may be a module with a .default property.
+function createYahooFinance(): any {
+  const opts = { suppressNotices: ["yahooSurvey"] };
+  try {
+    // Direct: import resolved to the class
+    return new (YahooFinanceModule as any)(opts);
+  } catch {
+    // Fallback: import resolved to { default: class }
+    const Ctor = (YahooFinanceModule as any)?.default ?? YahooFinanceModule;
+    return new Ctor(opts);
+  }
+}
+
+const yahooFinance = createYahooFinance();
 
 export interface StockQuote {
   symbol: string;
