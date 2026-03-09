@@ -4,6 +4,7 @@ import {
   getStockQuote,
   getHistoricalVolatility,
   getVIX,
+  getStockContext,
 } from "@/lib/yahoo-finance";
 import { putGreeks } from "@/lib/black-scholes";
 import {
@@ -70,8 +71,12 @@ export async function GET(request: NextRequest) {
 
     const stabilityResult = scoreCompanyStability(companyStability);
 
-    // Fetch options chain
-    const initialChain = await getOptionsChain(upperSymbol);
+    // Fetch stock context and initial options chain in parallel
+    const [contextResult, initialChain] = await Promise.all([
+      getStockContext(upperSymbol, quote.price).catch(() => null),
+      getOptionsChain(upperSymbol),
+    ]);
+    const stockContext = contextResult;
 
     // Fetch chains for expirations in the requested DTE window
     const now = new Date();
@@ -160,6 +165,7 @@ export async function GET(request: NextRequest) {
       historicalVolatility: hv,
       marketRegime,
       stability: stabilityResult,
+      context: stockContext,
       expirationDates: initialChain.expirationDates,
       scoredPuts: scored,
       putsByExpiration: byExpiration,
