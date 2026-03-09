@@ -7,6 +7,7 @@ import StockQuoteCard from "@/components/StockQuoteCard";
 import PutTable from "@/components/PutTable";
 import ScreenerResults from "@/components/ScreenerResults";
 import Top10Puts from "@/components/Top10Puts";
+import ErrorToast from "@/components/ErrorToast";
 
 interface AnalysisData {
   symbol: string;
@@ -76,25 +77,43 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [screenLoading, setScreenLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"analyze" | "screen">("analyze");
   const [dataSourceStatus, setDataSourceStatus] = useState<"connected" | "degraded" | "down" | null>(null);
+
+  // Safely parse API response - handles HTML error pages from Vercel
+  const safeParseResponse = async (res: Response): Promise<{ data: Record<string, unknown> | null; rawText: string }> => {
+    const rawText = await res.text();
+    try {
+      return { data: JSON.parse(rawText), rawText };
+    } catch {
+      return { data: null, rawText };
+    }
+  };
 
   const analyzeSymbol = useCallback(async (symbol: string) => {
     setLoading(true);
     setError(null);
+    setErrorDetails(null);
     setActiveTab("analyze");
     setDataSourceStatus(null);
     try {
       const res = await fetch(`/api/analyze?symbol=${encodeURIComponent(symbol)}`);
-      const data = await res.json();
+      const { data, rawText } = await safeParseResponse(res);
+
       if (!res.ok) {
-        if (data.error?.includes("fetch failed") || data.error?.includes("429")) {
+        const serverError = data?.error as string | undefined;
+        setErrorDetails(`Status: ${res.status}\n${serverError ?? rawText.slice(0, 500)}`);
+        if (serverError?.includes("fetch failed") || serverError?.includes("429")) {
           setDataSourceStatus("down");
           throw new Error("Yahoo Finance is currently unavailable (rate limited or unreachable). Please try again in a few minutes.");
         }
-        throw new Error(data.error || "Analysis failed");
+        throw new Error(serverError || `Server returned ${res.status}: ${rawText.slice(0, 200)}`);
       }
-      setAnalysis(data);
+      if (!data) {
+        throw new Error("Server returned invalid response (not JSON)");
+      }
+      setAnalysis(data as unknown as AnalysisData);
       setDataSourceStatus("connected");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Analysis failed";
@@ -113,26 +132,33 @@ export default function Home() {
   const runScreener = useCallback(async () => {
     setScreenLoading(true);
     setError(null);
+    setErrorDetails(null);
     setActiveTab("screen");
     setDataSourceStatus(null);
     try {
       const res = await fetch("/api/screen");
-      const data = await res.json();
+      const { data, rawText } = await safeParseResponse(res);
+
       if (!res.ok) {
-        if (data.error?.includes("fetch failed") || data.error?.includes("429")) {
+        const serverError = data?.error as string | undefined;
+        setErrorDetails(`Status: ${res.status}\n${serverError ?? rawText.slice(0, 500)}`);
+        if (serverError?.includes("fetch failed") || serverError?.includes("429")) {
           setDataSourceStatus("down");
           throw new Error("Yahoo Finance is currently unavailable. Please try again shortly.");
         }
-        throw new Error(data.error || "Screening failed");
+        throw new Error(serverError || `Server returned ${res.status}: ${rawText.slice(0, 200)}`);
+      }
+      if (!data) {
+        throw new Error("Server returned invalid response (not JSON)");
       }
       setScreenerData(data);
 
       // Check if some symbols failed
-      const failed = data.failedSymbols ?? [];
-      const total = (data.results?.length ?? 0) + failed.length;
-      if (failed.length > 0 && data.results?.length > 0) {
+      const failed = (data.failedSymbols as unknown[]) ?? [];
+      const results = (data.results as unknown[]) ?? [];
+      if (failed.length > 0 && results.length > 0) {
         setDataSourceStatus("degraded");
-      } else if (failed.length > 0 && (!data.results || data.results.length === 0)) {
+      } else if (failed.length > 0 && results.length === 0) {
         setDataSourceStatus("down");
       } else {
         setDataSourceStatus("connected");
@@ -241,13 +267,12 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Error Display */}
-      {error && (
-        <div className="mb-6 p-4 bg-red-900/20 border border-red-500/30 rounded-lg text-red-400">
-          <div className="font-medium mb-1">Error</div>
-          {error}
-        </div>
-      )}
+      {/* Error Popup */}
+      <ErrorToast
+        message={error}
+        details={errorDetails}
+        onDismiss={() => { setError(null); setErrorDetails(null); }}
+      />
 
       {/* Loading State */}
       {loading && (

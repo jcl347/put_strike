@@ -29,12 +29,22 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const [quote, hv, vix] = await Promise.all([
+    const [quoteResult, hvResult, vixResult] = await Promise.allSettled([
       getStockQuote(upperSymbol),
       getHistoricalVolatility(upperSymbol),
       getVIX(),
     ]);
 
+    if (quoteResult.status === "rejected") {
+      throw new Error(`Failed to fetch quote for ${upperSymbol}: ${quoteResult.reason?.message ?? quoteResult.reason}`);
+    }
+    if (hvResult.status === "rejected") {
+      throw new Error(`Failed to fetch historical data for ${upperSymbol}: ${hvResult.reason?.message ?? hvResult.reason}`);
+    }
+
+    const quote = quoteResult.value;
+    const hv = hvResult.value;
+    const vix = vixResult.status === "fulfilled" ? vixResult.value : 20;
     const marketRegime = classifyMarketRegime(vix);
 
     // Build company stability profile

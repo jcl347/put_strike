@@ -46,7 +46,13 @@ export async function GET(request: NextRequest) {
   const selectedSymbols = symbols.slice(0, 20);
 
   try {
-    const vix = await getVIX();
+    // VIX fetch should not crash the entire screener
+    let vix = 20; // default assumption: normal market
+    try {
+      vix = await getVIX();
+    } catch (vixErr) {
+      console.warn("[/api/screen] VIX fetch failed, using default:", vixErr instanceof Error ? vixErr.message : vixErr);
+    }
     const marketRegime = classifyMarketRegime(vix);
 
     // Process symbols in batches of 3 with 1s delay between batches
