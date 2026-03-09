@@ -23,14 +23,18 @@ export const maxDuration = 30;
 /**
  * Price prediction endpoint.
  * Computes 300+ features and runs ensemble prediction models.
+ * If a Colab GPU inference endpoint is configured, also calls that.
  *
- * GET /api/predict?symbol=AAPL
+ * GET /api/predict?symbol=AAPL&colab_url=https://xxxx.ngrok.io
  */
 export async function GET(request: NextRequest) {
   const symbol = request.nextUrl.searchParams.get("symbol");
   if (!symbol) {
     return NextResponse.json({ error: "Symbol is required" }, { status: 400 });
   }
+
+  // Optional: Colab inference server URL (from user settings)
+  const colabUrl = request.nextUrl.searchParams.get("colab_url");
 
   const upperSymbol = symbol.toUpperCase();
 
@@ -107,7 +111,7 @@ export async function GET(request: NextRequest) {
       context?.daysToEarnings ?? null,
     );
 
-    // Generate prediction
+    // Generate statistical ensemble prediction (always runs)
     const prediction = generatePrediction(
       upperSymbol,
       quote.price,
@@ -117,6 +121,40 @@ export async function GET(request: NextRequest) {
       context?.trendDirection ?? "sideways",
     );
 
+    // Try Colab iTransformer inference if URL is configured
+    let colabPrediction: any = null;
+    let colabStatus: "connected" | "unavailable" | "not_configured" = "not_configured";
+
+    if (colabUrl) {
+      try {
+        // Build the feature matrix for the Colab model
+        // Send the raw OHLCV data — Colab computes its own features
+        const colabPayload = {
+          symbol: upperSymbol,
+          current_price: quote.price,
+          features: historyResult.slice(-60).map(d => [
+            d.open, d.high, d.low, d.close, d.volume,
+          ]),
+        };
+
+        const colabRes = await fetch(`${colabUrl}/predict`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(colabPayload),
+          signal: AbortSignal.timeout(10000), // 10s timeout
+        });
+
+        if (colabRes.ok) {
+          colabPrediction = await colabRes.json();
+          colabStatus = "connected";
+        } else {
+          colabStatus = "unavailable";
+        }
+      } catch {
+        colabStatus = "unavailable";
+      }
+    }
+
     return NextResponse.json({
       ...prediction,
       featureCount: featureVector.metadata.featureCount,
@@ -124,6 +162,9 @@ export async function GET(request: NextRequest) {
       context,
       quote,
       hv,
+      // Colab integration
+      colabPrediction,
+      colabStatus,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Prediction failed";

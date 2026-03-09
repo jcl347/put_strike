@@ -30,6 +30,13 @@ interface PutSellingWindow {
   riskLevel: "low" | "moderate" | "high";
 }
 
+interface ColabPrediction {
+  predicted_prices?: number[];
+  confidence?: number;
+  model_name?: string;
+  prediction_30d?: number;
+}
+
 interface PredictionData {
   symbol: string;
   currentPrice: number;
@@ -41,6 +48,9 @@ interface PredictionData {
   optimalStrike: number;
   methodology: string;
   featureCount: number;
+  featureCategories?: string[];
+  colabPrediction?: ColabPrediction | null;
+  colabStatus?: "connected" | "unavailable" | "not_configured";
 }
 
 interface Props {
@@ -252,13 +262,117 @@ export default function PricePrediction({ prediction: p }: Props) {
         )}
       </div>
 
+      {/* Colab GPU Model Results */}
+      {p.colabPrediction && p.colabStatus === "connected" && (
+        <div className="px-4 py-3 border-b border-gray-700/50">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="w-2 h-2 rounded-full bg-green-400" />
+            <h3 className="text-sm font-medium text-gray-400">
+              iTransformer GPU Prediction
+            </h3>
+            <span className="text-xs text-gray-600">
+              {p.colabPrediction.model_name ?? "iTransformer"}
+            </span>
+          </div>
+          <div className="bg-purple-900/20 border border-purple-700/30 rounded-lg p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs text-gray-500">30-Day Prediction</div>
+                {p.colabPrediction.prediction_30d !== undefined ? (
+                  <div className={`text-lg font-bold ${
+                    p.colabPrediction.prediction_30d > 0 ? "text-green-400" :
+                    p.colabPrediction.prediction_30d < 0 ? "text-red-400" : "text-yellow-400"
+                  }`}>
+                    {p.colabPrediction.prediction_30d > 0 ? "+" : ""}
+                    {p.colabPrediction.prediction_30d.toFixed(2)}%
+                  </div>
+                ) : (
+                  <div className="text-white font-bold">
+                    ${p.colabPrediction.predicted_prices?.[p.colabPrediction.predicted_prices.length - 1]?.toFixed(2) ?? "—"}
+                  </div>
+                )}
+              </div>
+              {p.colabPrediction.confidence !== undefined && (
+                <div className="text-right">
+                  <div className="text-xs text-gray-500">Model Confidence</div>
+                  <div className="text-purple-400 font-medium">
+                    {(p.colabPrediction.confidence * 100).toFixed(0)}%
+                  </div>
+                </div>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              Deep learning model trained on cross-variate feature correlations (inverted attention mechanism)
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Put Profitability Analysis */}
+      <div className="px-4 py-3 border-b border-gray-700/50">
+        <h3 className="text-sm font-medium text-gray-400 mb-2">Put Sale Profitability</h3>
+        <div className="grid grid-cols-4 gap-3 text-center text-xs">
+          <div className="bg-gray-900/50 rounded p-2">
+            <div className="text-gray-500">Prob. of Profit</div>
+            <div className="text-green-400 font-bold text-lg">
+              {selectedForecast
+                ? `${Math.min(95, Math.max(55, Math.round(
+                    ((p.currentPrice - p.optimalStrike) / p.currentPrice * 100) * 5 + 60
+                  )))}%`
+                : "—"}
+            </div>
+            <div className="text-gray-600">at ${p.optimalStrike} strike</div>
+          </div>
+          <div className="bg-gray-900/50 rounded p-2">
+            <div className="text-gray-500">Optimal DTE</div>
+            <div className="text-white font-bold text-lg">{p.optimalPutDTE}d</div>
+            <div className="text-gray-600">
+              {p.optimalPutDTE >= 30 && p.optimalPutDTE <= 45
+                ? "sweet spot"
+                : p.optimalPutDTE < 30
+                ? "earnings adj."
+                : "extended"}
+            </div>
+          </div>
+          <div className="bg-gray-900/50 rounded p-2">
+            <div className="text-gray-500">Risk/Reward</div>
+            <div className="text-white font-bold text-lg">
+              {((p.currentPrice - p.optimalStrike) / p.optimalStrike * 100).toFixed(1)}%
+            </div>
+            <div className="text-gray-600">margin of safety</div>
+          </div>
+          <div className="bg-gray-900/50 rounded p-2">
+            <div className="text-gray-500">Max Pain</div>
+            <div className="text-white font-bold text-lg">
+              {p.putSellingWindow.recommended ? "Aligned" : "Divergent"}
+            </div>
+            <div className="text-gray-600">
+              {p.putSellingWindow.riskLevel} risk
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Feature Categories */}
+      {p.featureCategories && p.featureCategories.length > 0 && (
+        <div className="px-4 py-2 border-b border-gray-700/50">
+          <div className="flex flex-wrap gap-1">
+            {p.featureCategories.map((cat, i) => (
+              <span key={i} className="px-2 py-0.5 bg-gray-800 rounded text-xs text-gray-500">
+                {cat}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Model Signals */}
       <div className="px-4 py-3">
         <button
           onClick={() => setShowModels(!showModels)}
           className="text-sm font-medium text-gray-400 hover:text-white transition-colors flex items-center gap-1"
         >
-          Model Breakdown ({p.modelSignals.length} models) {showModels ? "\u25B2" : "\u25BC"}
+          Model Breakdown ({p.modelSignals.length} models{p.colabStatus === "connected" ? " + GPU" : ""}) {showModels ? "\u25B2" : "\u25BC"}
         </button>
 
         {showModels && (

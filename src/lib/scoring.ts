@@ -227,14 +227,21 @@ export function scoreCompanyStability(
 /**
  * Score a put option candidate using research-validated multi-factor model.
  *
- * Revised weights (now include stability):
- * - Premium yield: 20% (income driver)
- * - Delta quality: 15% (probability of profit)
- * - DTE quality: 12% (theta decay timing)
- * - Liquidity: 12% (execution quality)
- * - Distance OTM: 12% (margin of safety)
- * - IV environment: 9% (premium richness)
- * - Company stability: 20% (would you own this stock?)
+ * Profitability-optimized weights (with stability):
+ * - Premium yield: 22% (primary profit driver — higher weight)
+ * - Theta efficiency: 8% (theta/gamma ratio — rewards fast decay with low gamma risk)
+ * - Delta quality: 13% (probability of profit)
+ * - DTE quality: 10% (theta decay timing)
+ * - Liquidity: 10% (execution quality)
+ * - Distance OTM: 10% (margin of safety)
+ * - IV environment: 10% (premium richness — elevated from 9%)
+ * - Company stability: 17% (would you own this stock?)
+ *
+ * Key profitability tuning:
+ * - Annualized return thresholds lowered to surface more opportunities
+ * - Theta/gamma ratio rewards puts with efficient daily decay
+ * - IV rank scoring uses Schwab research breakpoints (56.8% win rate at IVR > 50)
+ * - Distance OTM sweet spot narrowed to 3-12% (captures more premium)
  */
 export function scorePut(
   candidate: PutCandidate,
@@ -244,7 +251,7 @@ export function scorePut(
 ): ScoredPut {
   const signals: Signal[] = [];
 
-  // 1. Premium Yield (annualized return on collateral)
+  // 1. Premium Yield (annualized return on collateral) — PRIMARY PROFIT DRIVER
   // Use lastPrice as fallback when bid/ask are 0 (after hours / weekends)
   const midPrice = candidate.bid > 0 && candidate.ask > 0
     ? (candidate.bid + candidate.ask) / 2
@@ -254,21 +261,43 @@ export function scorePut(
   const premiumYield = (midPrice / candidate.strikePrice) * 100;
   const annualizedReturn = premiumYield * (365 / candidate.dte);
 
+  // More granular yield scoring to differentiate better
   let yieldScore: number;
-  if (annualizedReturn >= 20) yieldScore = 100;
-  else if (annualizedReturn >= 12) yieldScore = 80;
-  else if (annualizedReturn >= 8) yieldScore = 60;
-  else if (annualizedReturn >= 4) yieldScore = 40;
-  else yieldScore = 20;
+  if (annualizedReturn >= 24) yieldScore = 100;
+  else if (annualizedReturn >= 18) yieldScore = 92;
+  else if (annualizedReturn >= 14) yieldScore = 82;
+  else if (annualizedReturn >= 10) yieldScore = 70;
+  else if (annualizedReturn >= 7) yieldScore = 55;
+  else if (annualizedReturn >= 4) yieldScore = 38;
+  else yieldScore = 18;
 
   signals.push({
     name: "Annualized Return",
     value: `${annualizedReturn.toFixed(1)}%`,
-    sentiment: annualizedReturn >= 10 ? "bullish" : annualizedReturn >= 5 ? "neutral" : "bearish",
-    weight: 0.2,
+    sentiment: annualizedReturn >= 12 ? "bullish" : annualizedReturn >= 6 ? "neutral" : "bearish",
+    weight: 0.22,
   });
 
-  // 2. Delta Quality (0.15-0.30 is sweet spot)
+  // 2. Theta Efficiency (theta/gamma ratio — daily decay per unit of gamma risk)
+  // High theta with low gamma means efficient premium capture
+  const absTheta = Math.abs(candidate.theta);
+  const thetaGammaRatio = candidate.gamma > 0 ? absTheta / candidate.gamma : 0;
+
+  let thetaEffScore: number;
+  if (thetaGammaRatio >= 50) thetaEffScore = 100;
+  else if (thetaGammaRatio >= 30) thetaEffScore = 80;
+  else if (thetaGammaRatio >= 15) thetaEffScore = 60;
+  else if (thetaGammaRatio >= 5) thetaEffScore = 40;
+  else thetaEffScore = 20;
+
+  signals.push({
+    name: "Theta Efficiency",
+    value: `$${absTheta.toFixed(3)}/day (θ/γ: ${thetaGammaRatio.toFixed(0)})`,
+    sentiment: thetaEffScore >= 70 ? "bullish" : thetaEffScore >= 40 ? "neutral" : "bearish",
+    weight: 0.08,
+  });
+
+  // 3. Delta Quality (0.15-0.30 is sweet spot)
   const absDelta = Math.abs(candidate.delta);
   let deltaScore: number;
   if (absDelta >= 0.15 && absDelta <= 0.30) deltaScore = 100;
@@ -281,24 +310,25 @@ export function scorePut(
     name: "Delta / P(OTM)",
     value: `${absDelta.toFixed(2)} / ${probOTM}%`,
     sentiment: absDelta >= 0.15 && absDelta <= 0.30 ? "bullish" : "neutral",
-    weight: 0.15,
+    weight: 0.13,
   });
 
-  // 3. DTE Quality (30-45 optimal)
+  // 4. DTE Quality (30-45 optimal per tastytrade, but 25-50 is good)
   let dteScore: number;
-  if (candidate.dte >= 30 && candidate.dte <= 50) dteScore = 100;
-  else if (candidate.dte >= 20 && candidate.dte <= 60) dteScore = 70;
-  else if (candidate.dte >= 14 && candidate.dte <= 75) dteScore = 50;
-  else dteScore = 25;
+  if (candidate.dte >= 30 && candidate.dte <= 45) dteScore = 100;
+  else if (candidate.dte >= 25 && candidate.dte <= 55) dteScore = 80;
+  else if (candidate.dte >= 20 && candidate.dte <= 60) dteScore = 60;
+  else if (candidate.dte >= 14 && candidate.dte <= 75) dteScore = 40;
+  else dteScore = 20;
 
   signals.push({
     name: "Days to Expiration",
     value: `${candidate.dte} days`,
-    sentiment: candidate.dte >= 30 && candidate.dte <= 50 ? "bullish" : "neutral",
-    weight: 0.12,
+    sentiment: candidate.dte >= 30 && candidate.dte <= 45 ? "bullish" : "neutral",
+    weight: 0.10,
   });
 
-  // 4. Liquidity (bid-ask spread as % of mid, OI)
+  // 5. Liquidity (bid-ask spread as % of mid, OI)
   const bidAskSpread = candidate.ask - candidate.bid;
   const spreadPct = midPrice > 0 ? (bidAskSpread / midPrice) * 100 : 100;
 
@@ -313,42 +343,45 @@ export function scorePut(
     name: "Liquidity",
     value: `Spread: ${spreadPct.toFixed(1)}%, OI: ${candidate.openInterest}`,
     sentiment: liquidityScore >= 75 ? "bullish" : liquidityScore >= 50 ? "neutral" : "bearish",
-    weight: 0.12,
+    weight: 0.10,
   });
 
-  // 5. Distance OTM (5-15% below current price ideal)
+  // 6. Distance OTM — narrowed sweet spot to 3-12% (captures more premium)
   const distanceOTM =
     ((candidate.stockPrice - candidate.strikePrice) / candidate.stockPrice) * 100;
 
   let distanceScore: number;
-  if (distanceOTM >= 5 && distanceOTM <= 15) distanceScore = 100;
-  else if (distanceOTM >= 3 && distanceOTM <= 20) distanceScore = 70;
+  if (distanceOTM >= 3 && distanceOTM <= 12) distanceScore = 100;
+  else if (distanceOTM >= 2 && distanceOTM <= 18) distanceScore = 70;
   else if (distanceOTM >= 1 && distanceOTM <= 25) distanceScore = 40;
   else distanceScore = 15;
 
   signals.push({
     name: "Distance OTM",
     value: `${distanceOTM.toFixed(1)}%`,
-    sentiment: distanceOTM >= 5 && distanceOTM <= 15 ? "bullish" : "neutral",
-    weight: 0.12,
+    sentiment: distanceOTM >= 3 && distanceOTM <= 12 ? "bullish" : "neutral",
+    weight: 0.10,
   });
 
-  // 6. IV Rank (if available)
+  // 7. IV Rank — Schwab research: IVR > 50 + IVP > 50 = 56.8% win rate
   let ivScore = 50;
   if (ivRank !== null) {
-    if (ivRank >= 50) ivScore = 100;
-    else if (ivRank >= 30) ivScore = 70;
-    else ivScore = 30;
+    // More granular IV scoring with research-backed breakpoints
+    if (ivRank >= 70) ivScore = 100;      // Premium-rich environment
+    else if (ivRank >= 50) ivScore = 90;   // Schwab optimal zone
+    else if (ivRank >= 35) ivScore = 65;   // Acceptable
+    else if (ivRank >= 20) ivScore = 40;   // Below average
+    else ivScore = 20;                      // Premium is thin
 
     signals.push({
       name: "IV Rank",
       value: `${ivRank.toFixed(0)}%`,
       sentiment: ivRank >= 50 ? "bullish" : ivRank >= 30 ? "neutral" : "bearish",
-      weight: 0.09,
+      weight: 0.10,
     });
   }
 
-  // 7. Company Stability (if provided)
+  // 8. Company Stability (if provided)
   let stabilityScore = 60; // neutral default when not provided
   if (stability) {
     const stabilityResult = scoreCompanyStability(stability);
@@ -356,22 +389,24 @@ export function scorePut(
     signals.push(...stabilityResult.signals);
   }
 
-  // Weighted composite score
+  // Weighted composite score — profitability-optimized
   const score = stability
-    ? yieldScore * 0.20 +
-      deltaScore * 0.15 +
+    ? yieldScore * 0.22 +
+      thetaEffScore * 0.08 +
+      deltaScore * 0.13 +
+      dteScore * 0.10 +
+      liquidityScore * 0.10 +
+      distanceScore * 0.10 +
+      ivScore * 0.10 +
+      stabilityScore * 0.17
+    : // Weights when no stability data available (redistribute stability's 17%)
+      yieldScore * 0.26 +
+      thetaEffScore * 0.10 +
+      deltaScore * 0.16 +
       dteScore * 0.12 +
       liquidityScore * 0.12 +
       distanceScore * 0.12 +
-      ivScore * 0.09 +
-      stabilityScore * 0.20
-    : // Original weights when no stability data available
-      yieldScore * 0.25 +
-      deltaScore * 0.20 +
-      dteScore * 0.15 +
-      liquidityScore * 0.15 +
-      distanceScore * 0.15 +
-      ivScore * 0.10;
+      ivScore * 0.12;
 
   // Apply market regime modifier
   let adjustedScore = score;

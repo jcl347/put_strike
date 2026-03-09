@@ -10,6 +10,7 @@ import Top10Puts from "@/components/Top10Puts";
 import ErrorToast from "@/components/ErrorToast";
 import PutDecisionAssistant from "@/components/PutDecisionAssistant";
 import PricePrediction from "@/components/PricePrediction";
+import ColabConnect from "@/components/ColabConnect";
 
 interface AnalysisData {
   symbol: string;
@@ -117,6 +118,7 @@ export default function Home() {
   const [screenerData, setScreenerData] = useState<ScreenerData | null>(null);
   const [prediction, setPrediction] = useState<PredictionData | null>(null);
   const [predictionLoading, setPredictionLoading] = useState(false);
+  const [colabUrl, setColabUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [screenLoading, setScreenLoading] = useState(false);
   const [screenProgress, setScreenProgress] = useState<ScreenProgress | null>(null);
@@ -160,8 +162,8 @@ export default function Home() {
       }
       setAnalysis(data as unknown as AnalysisData);
       setDataSourceStatus("connected");
-      // Trigger prediction in background
-      fetchPrediction(symbol);
+      // Trigger prediction in background (with Colab URL if connected)
+      fetchPrediction(symbol, colabUrl);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Analysis failed";
       if (msg.includes("fetch failed") || msg.includes("Failed to fetch")) {
@@ -174,13 +176,18 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colabUrl]);
 
-  // Fetch price prediction for a symbol
-  const fetchPrediction = useCallback(async (symbol: string) => {
+  // Fetch price prediction for a symbol (with optional Colab GPU inference)
+  const fetchPrediction = useCallback(async (symbol: string, colabEndpoint?: string | null) => {
     setPredictionLoading(true);
     try {
-      const res = await fetch(`/api/predict?symbol=${encodeURIComponent(symbol)}`);
+      let url = `/api/predict?symbol=${encodeURIComponent(symbol)}`;
+      if (colabEndpoint) {
+        url += `&colab_url=${encodeURIComponent(colabEndpoint)}`;
+      }
+      const res = await fetch(url);
       const { data } = await safeParseResponse(res);
       if (res.ok && data) {
         setPrediction(data);
@@ -396,8 +403,9 @@ export default function Home() {
         </div>
       )}
 
-      {/* Market Regime */}
-      <div className="mb-6">
+      {/* Colab Connection + Market Regime */}
+      <div className="mb-6 space-y-3">
+        <ColabConnect onUrlChange={setColabUrl} />
         <MarketRegime regime={marketRegime} />
       </div>
 
@@ -464,6 +472,11 @@ export default function Home() {
               stabilityScore: analysis.stability?.score ?? 50,
               vix: analysis.marketRegime?.vix ?? 20,
               context: (analysis as unknown as Record<string, unknown>).context as null,
+              trailingPE: analysis.quote.trailingPE,
+              fiftyTwoWeekLow: analysis.quote.fiftyTwoWeekLow,
+              fiftyTwoWeekHigh: analysis.quote.fiftyTwoWeekHigh,
+              volume: analysis.quote.volume,
+              avgVolume: analysis.quote.avgVolume,
             }}
           />
 
@@ -607,6 +620,11 @@ export default function Home() {
                     stabilityScore: stock.stability?.score ?? 50,
                     vix: screenerData.marketRegime?.vix ?? 20,
                     context: stock.context ?? null,
+                    trailingPE: stock.quote?.trailingPE,
+                    fiftyTwoWeekLow: stock.quote?.fiftyTwoWeekLow,
+                    fiftyTwoWeekHigh: stock.quote?.fiftyTwoWeekHigh,
+                    volume: stock.quote?.volume,
+                    avgVolume: stock.quote?.avgVolume,
                   }}
                 />
               ))}

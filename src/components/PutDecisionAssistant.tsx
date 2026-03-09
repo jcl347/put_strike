@@ -32,6 +32,11 @@ interface DecisionData {
   stabilityScore: number;
   vix: number;
   context: StockContext | null;
+  trailingPE?: number;
+  fiftyTwoWeekLow?: number;
+  fiftyTwoWeekHigh?: number;
+  volume?: number;
+  avgVolume?: number;
 }
 
 interface Props {
@@ -157,6 +162,69 @@ function evaluateChecklist(d: DecisionData): ChecklistItem[] {
     rule: "Dividend-paying stocks provide downside cushion if assigned",
   });
 
+  // ── Valuation ──
+  if (d.trailingPE && d.trailingPE > 0) {
+    items.push({
+      label: "Valuation (P/E)",
+      category: "Risk Management",
+      status: d.trailingPE <= 25 ? "pass" : d.trailingPE <= 40 ? "warn" : "fail",
+      detail: `P/E: ${d.trailingPE.toFixed(1)}`,
+      rule: d.trailingPE > 40
+        ? "Very high P/E — valuation compression risk if assigned"
+        : d.trailingPE > 25
+        ? "Above-average P/E — moderate valuation risk"
+        : "Reasonable valuation — comfortable ownership if assigned",
+    });
+  }
+
+  // ── 52-Week Range Position ──
+  if (d.fiftyTwoWeekLow && d.fiftyTwoWeekHigh) {
+    const range = d.fiftyTwoWeekHigh - d.fiftyTwoWeekLow;
+    const position = range > 0 ? ((d.price - d.fiftyTwoWeekLow) / range) * 100 : 50;
+    items.push({
+      label: "52-Week Position",
+      category: "Risk Management",
+      status: position >= 30 && position <= 85 ? "pass" : position < 30 ? "fail" : "warn",
+      detail: `${position.toFixed(0)}% of 52wk range ($${d.fiftyTwoWeekLow.toFixed(0)}-$${d.fiftyTwoWeekHigh.toFixed(0)})`,
+      rule: position < 30
+        ? "Near 52-week low — high risk of further decline"
+        : position > 85
+        ? "Near 52-week high — limited upside, watch for reversal"
+        : "Healthy position within 52-week range",
+    });
+  }
+
+  // ── Volume Analysis ──
+  if (d.volume && d.avgVolume && d.avgVolume > 0) {
+    const volumeRatio = d.volume / d.avgVolume;
+    items.push({
+      label: "Volume Activity",
+      category: "Chart Analysis",
+      status: volumeRatio >= 0.5 && volumeRatio <= 2 ? "pass"
+        : volumeRatio > 2 ? "warn" : "warn",
+      detail: `${(volumeRatio * 100).toFixed(0)}% of avg volume`,
+      rule: volumeRatio > 2
+        ? "Unusual volume — potential news or institutional activity, investigate before selling"
+        : volumeRatio < 0.5
+        ? "Very low volume — may indicate poor liquidity for options"
+        : "Normal trading volume",
+    });
+  }
+
+  // ── ATR-Based Risk ──
+  if (ctx) {
+    const atrPct = (ctx.avgTrueRange / d.price) * 100;
+    items.push({
+      label: "Daily Volatility (ATR)",
+      category: "Risk Management",
+      status: atrPct <= 2 ? "pass" : atrPct <= 3.5 ? "warn" : "fail",
+      detail: `ATR: $${ctx.avgTrueRange.toFixed(2)} (${atrPct.toFixed(1)}% of price)`,
+      rule: atrPct > 3.5
+        ? "High daily moves — use wider OTM strikes for safety"
+        : "Normal daily range — standard strike selection applies",
+    });
+  }
+
   return items;
 }
 
@@ -278,40 +346,99 @@ export default function PutDecisionAssistant({ data }: Props) {
             </div>
           ))}
 
-          {/* Strike Suggestions */}
+          {/* Strike Suggestions with Profit Scenarios */}
           {ctx && (
             <div className="mt-3 pt-3 border-t border-gray-700/50">
               <h4 className="text-xs font-medium text-gray-500 uppercase mb-2">
                 Suggested Strike Targets
               </h4>
               <div className="grid grid-cols-3 gap-2 text-sm">
-                <div className="bg-gray-800/50 rounded p-2 text-center">
-                  <div className="text-gray-500 text-xs">Conservative</div>
-                  <div className="text-white font-medium">
-                    ${Math.round(Math.min(ctx.supportLevel, data.price * 0.90))}
-                  </div>
-                  <div className="text-gray-600 text-xs">
-                    {((data.price - Math.min(ctx.supportLevel, data.price * 0.90)) / data.price * 100).toFixed(1)}% OTM
-                  </div>
-                </div>
-                <div className="bg-gray-800/50 rounded p-2 text-center border border-blue-700/30">
-                  <div className="text-blue-400 text-xs">Optimal</div>
-                  <div className="text-white font-medium">
-                    ${Math.round(data.price * 0.92)}
-                  </div>
-                  <div className="text-gray-600 text-xs">
-                    ~8% OTM
-                  </div>
-                </div>
-                <div className="bg-gray-800/50 rounded p-2 text-center">
-                  <div className="text-gray-500 text-xs">Aggressive</div>
-                  <div className="text-white font-medium">
-                    ${Math.round(data.price * 0.95)}
-                  </div>
-                  <div className="text-gray-600 text-xs">
-                    ~5% OTM
-                  </div>
-                </div>
+                {[
+                  {
+                    label: "Conservative",
+                    strike: Math.round(Math.min(ctx.supportLevel, data.price * 0.90)),
+                    color: "text-gray-500",
+                    border: "",
+                    estPremium: 0.003,
+                  },
+                  {
+                    label: "Optimal",
+                    strike: Math.round(data.price * 0.92),
+                    color: "text-blue-400",
+                    border: "border border-blue-700/30",
+                    estPremium: 0.006,
+                  },
+                  {
+                    label: "Aggressive",
+                    strike: Math.round(data.price * 0.95),
+                    color: "text-gray-500",
+                    border: "",
+                    estPremium: 0.012,
+                  },
+                ].map(({ label, strike, color, border, estPremium }) => {
+                  const otmPct = ((data.price - strike) / data.price * 100);
+                  const estCredit = strike * estPremium;
+                  const annReturn = estPremium * (365 / 35) * 100;
+                  return (
+                    <div key={label} className={`bg-gray-800/50 rounded p-2 text-center ${border}`}>
+                      <div className={`${color} text-xs`}>{label}</div>
+                      <div className="text-white font-medium">${strike}</div>
+                      <div className="text-gray-600 text-xs">{otmPct.toFixed(1)}% OTM</div>
+                      <div className="text-gray-500 text-xs mt-1">
+                        ~${estCredit.toFixed(2)}/sh credit
+                      </div>
+                      <div className="text-gray-600 text-xs">
+                        ~{annReturn.toFixed(0)}% ann.
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Profit/Loss Scenarios */}
+              <div className="mt-3">
+                <h4 className="text-xs font-medium text-gray-500 uppercase mb-2">
+                  Scenario Analysis (Optimal Strike, 35 DTE)
+                </h4>
+                {(() => {
+                  const strike = Math.round(data.price * 0.92);
+                  const estCredit = strike * 0.006;
+                  const collateral = strike * 100;
+                  return (
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div className="bg-green-900/20 border border-green-700/30 rounded p-2">
+                        <div className="text-green-400 font-medium">Max Profit (OTM)</div>
+                        <div className="text-white">${(estCredit * 100).toFixed(0)}/contract</div>
+                        <div className="text-gray-500">
+                          {(estCredit / strike * 100).toFixed(2)}% return in 35d
+                        </div>
+                        <div className="text-gray-600 mt-1">
+                          Close at 50%: ${(estCredit * 50).toFixed(0)}
+                        </div>
+                      </div>
+                      <div className="bg-yellow-900/20 border border-yellow-700/30 rounded p-2">
+                        <div className="text-yellow-400 font-medium">Breakeven</div>
+                        <div className="text-white">${(strike - estCredit).toFixed(2)}</div>
+                        <div className="text-gray-500">
+                          {((data.price - (strike - estCredit)) / data.price * 100).toFixed(1)}% below current
+                        </div>
+                        <div className="text-gray-600 mt-1">
+                          Collateral: ${collateral.toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="bg-red-900/20 border border-red-700/30 rounded p-2">
+                        <div className="text-red-400 font-medium">Stop Loss (2x)</div>
+                        <div className="text-white">-${(estCredit * 100).toFixed(0)}/contract</div>
+                        <div className="text-gray-500">
+                          Close when loss = 2x credit
+                        </div>
+                        <div className="text-gray-600 mt-1">
+                          Max risk: ${(estCredit * 200).toFixed(0)}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           )}
