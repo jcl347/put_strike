@@ -1,0 +1,20 @@
+import { NextRequest, NextResponse } from "next/server";
+import { searchSymbols } from "@/lib/yahoo-finance";
+
+export const dynamic = "force-dynamic";
+
+export async function GET(request: NextRequest) {
+  const query = request.nextUrl.searchParams.get("q");
+
+  if (!query || query.length < 1) {
+    return NextResponse.json({ results: [] });
+  }
+
+  try {
+    const results = await searchSymbols(query);
+    return NextResponse.json({ results });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Search failed";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
