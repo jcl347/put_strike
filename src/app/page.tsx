@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import SymbolSearch from "@/components/SymbolSearch";
 import MarketRegime from "@/components/MarketRegime";
 import StockQuoteCard from "@/components/StockQuoteCard";
@@ -71,15 +71,38 @@ interface AnalysisData {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ScreenerData = any;
 
+// Full watchlist: 20 high-liquidity stocks across sectors + major ETFs
+const SCREENER_SYMBOLS = [
+  // Mega-cap Tech
+  "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META",
+  // Finance
+  "JPM", "V", "MA",
+  // Consumer / Healthcare / Industrial
+  "JNJ", "PG", "KO", "WMT", "HD",
+  // ETFs
+  "SPY", "QQQ", "IWM",
+  // Additional high-liquidity
+  "DIS", "PEP", "COST",
+];
+
+interface ScreenProgress {
+  total: number;
+  completed: number;
+  currentSymbol: string;
+  failedSymbols: { symbol: string; error: string }[];
+}
+
 export default function Home() {
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
   const [screenerData, setScreenerData] = useState<ScreenerData | null>(null);
   const [loading, setLoading] = useState(false);
   const [screenLoading, setScreenLoading] = useState(false);
+  const [screenProgress, setScreenProgress] = useState<ScreenProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"analyze" | "screen">("analyze");
   const [dataSourceStatus, setDataSourceStatus] = useState<"connected" | "degraded" | "down" | null>(null);
+  const abortRef = useRef(false);
 
   // Safely parse API response - handles HTML error pages from Vercel
   const safeParseResponse = async (res: Response): Promise<{ data: Record<string, unknown> | null; rawText: string }> => {
@@ -129,51 +152,141 @@ export default function Home() {
     }
   }, []);
 
+  /**
+   * Client-side orchestrated screener.
+   * Calls /api/screen-single for each stock individually (2 at a time).
+   * Each serverless call handles just 1 stock so it fits within any Vercel timeout.
+   * Shows live progress as each stock completes.
+   */
   const runScreener = useCallback(async () => {
     setScreenLoading(true);
     setError(null);
     setErrorDetails(null);
     setActiveTab("screen");
     setDataSourceStatus(null);
+    setScreenerData(null);
+    abortRef.current = false;
+
+    const symbols = SCREENER_SYMBOLS;
+    const progress: ScreenProgress = {
+      total: symbols.length,
+      completed: 0,
+      currentSymbol: "",
+      failedSymbols: [],
+    };
+    setScreenProgress({ ...progress });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const successfulResults: any[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let marketRegime: any = null;
+    let vix: number | null = null;
+
     try {
-      const res = await fetch("/api/screen");
-      const { data, rawText } = await safeParseResponse(res);
+      // Process stocks 2 at a time (each makes 3-4 Yahoo requests server-side)
+      // 2 concurrent = 6-8 Yahoo requests at a time, avoids rate limiting
+      const concurrency = 2;
 
-      if (!res.ok) {
-        const serverError = data?.error as string | undefined;
-        setErrorDetails(`Status: ${res.status}\n${serverError ?? rawText.slice(0, 500)}`);
-        if (serverError?.includes("fetch failed") || serverError?.includes("429")) {
-          setDataSourceStatus("down");
-          throw new Error("Yahoo Finance is currently unavailable. Please try again shortly.");
+      for (let i = 0; i < symbols.length; i += concurrency) {
+        if (abortRef.current) break;
+
+        const batch = symbols.slice(i, i + concurrency);
+        progress.currentSymbol = batch.join(", ");
+        setScreenProgress({ ...progress });
+
+        const batchResults = await Promise.allSettled(
+          batch.map(async (sym) => {
+            const url = vix != null
+              ? `/api/screen-single?symbol=${encodeURIComponent(sym)}&vix=${vix}`
+              : `/api/screen-single?symbol=${encodeURIComponent(sym)}`;
+            const res = await fetch(url);
+            const { data } = await safeParseResponse(res);
+
+            if (!res.ok || !data) {
+              throw new Error((data?.error as string) || `HTTP ${res.status}`);
+            }
+            return { symbol: sym, data };
+          })
+        );
+
+        for (let j = 0; j < batchResults.length; j++) {
+          const r = batchResults[j];
+          if (r.status === "fulfilled") {
+            const { data } = r.value;
+            // Capture VIX from first successful result
+            if (vix === null && data.vix) {
+              vix = data.vix as number;
+            }
+            if (!marketRegime && data.marketRegime) {
+              marketRegime = data.marketRegime;
+            }
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if ((data.topPuts as any[])?.length > 0) {
+              successfulResults.push(data);
+            }
+          } else {
+            const errMsg = r.reason?.message ?? "Failed";
+            progress.failedSymbols.push({ symbol: batch[j], error: errMsg });
+          }
+          progress.completed++;
         }
-        throw new Error(serverError || `Server returned ${res.status}: ${rawText.slice(0, 200)}`);
-      }
-      if (!data) {
-        throw new Error("Server returned invalid response (not JSON)");
-      }
-      setScreenerData(data);
 
-      // Check if some symbols failed
-      const failed = (data.failedSymbols as unknown[]) ?? [];
-      const results = (data.results as unknown[]) ?? [];
-      if (failed.length > 0 && results.length > 0) {
+        setScreenProgress({ ...progress });
+
+        // Brief delay between batches to be kind to Yahoo rate limits
+        if (i + concurrency < symbols.length && !abortRef.current) {
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      }
+
+      // Sort results by best score
+      successfulResults.sort((a, b) => {
+        const aTop = a.topPuts?.[0]?.score ?? 0;
+        const bTop = b.topPuts?.[0]?.score ?? 0;
+        return bTop - aTop;
+      });
+
+      // Build global top 10 picks across all stocks
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const allScoredPuts: any[] = [];
+      for (const stock of successfulResults) {
+        for (const put of stock.topPuts ?? []) {
+          allScoredPuts.push({
+            ...put,
+            stabilityScore: stock.stability?.score ?? 0,
+            companyName: stock.quote?.name ?? stock.symbol,
+          });
+        }
+      }
+      allScoredPuts.sort((a, b) => b.score - a.score);
+      const top10 = allScoredPuts.slice(0, 10);
+
+      const finalData = {
+        marketRegime,
+        timestamp: new Date().toISOString(),
+        top10,
+        results: successfulResults,
+        failedSymbols: progress.failedSymbols,
+      };
+
+      setScreenerData(finalData);
+
+      // Set data source status
+      if (progress.failedSymbols.length > 0 && successfulResults.length > 0) {
         setDataSourceStatus("degraded");
-      } else if (failed.length > 0 && results.length === 0) {
+      } else if (progress.failedSymbols.length > 0 && successfulResults.length === 0) {
         setDataSourceStatus("down");
+        setError("Could not fetch data for any stocks. Yahoo Finance may be down or rate limiting.");
       } else {
         setDataSourceStatus("connected");
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Screening failed";
-      if (msg.includes("fetch failed") || msg.includes("Failed to fetch")) {
-        setDataSourceStatus("down");
-        setError("Yahoo Finance is currently unavailable. The live data source may be down or rate limiting requests. Please try again shortly.");
-      } else {
-        setError(msg);
-      }
-      setScreenerData(null);
+      setError(msg);
+      setDataSourceStatus("down");
     } finally {
       setScreenLoading(false);
+      setScreenProgress(null);
     }
   }, []);
 
@@ -398,6 +511,7 @@ export default function Home() {
           <ScreenerResults
             results={screenerData?.results ?? []}
             loading={screenLoading}
+            progress={screenProgress}
             onAnalyze={analyzeSymbol}
           />
         </div>
@@ -412,7 +526,7 @@ export default function Home() {
           </h2>
           <p className="text-gray-400 max-w-md mx-auto mb-6">
             Search for a stock to analyze its options chain with stability scoring,
-            or run the screener to find the Top 10 best put selling candidates.
+            or run the screener to find the Top 10 best put selling candidates across 20 stocks.
           </p>
           <div className="flex justify-center gap-3 mb-4">
             {["AAPL", "MSFT", "SPY", "NVDA", "AMZN"].map((sym) => (
@@ -429,7 +543,7 @@ export default function Home() {
             onClick={runScreener}
             className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
           >
-            Find Top 10 Put Sales
+            Screen 20 Stocks for Top 10 Put Sales
           </button>
         </div>
       )}

@@ -42,29 +42,61 @@ interface ScreenerStock {
   }>;
 }
 
+interface ScreenProgress {
+  total: number;
+  completed: number;
+  currentSymbol: string;
+  failedSymbols: { symbol: string; error: string }[];
+}
+
 interface ScreenerResultsProps {
   results: ScreenerStock[];
   loading: boolean;
+  progress?: ScreenProgress | null;
   onAnalyze: (symbol: string) => void;
 }
 
 export default function ScreenerResults({
   results,
   loading,
+  progress,
   onAnalyze,
 }: ScreenerResultsProps) {
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
 
   if (loading) {
+    const pct = progress ? Math.round((progress.completed / progress.total) * 100) : 0;
+
     return (
       <div className="text-center py-12">
         <div className="w-8 h-8 border-2 border-gray-600 border-t-blue-400 rounded-full animate-spin mx-auto mb-3" />
         <p className="text-gray-400">
           Screening stocks for put selling opportunities...
         </p>
-        <p className="text-gray-500 text-sm mt-1">
-          Analyzing 10 stocks for optimal put selling opportunities...
-        </p>
+        {progress && (
+          <div className="mt-4 max-w-md mx-auto">
+            {/* Progress bar */}
+            <div className="w-full bg-gray-800 rounded-full h-2 mb-2">
+              <div
+                className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <p className="text-gray-500 text-sm">
+              {progress.completed} of {progress.total} stocks analyzed ({pct}%)
+            </p>
+            {progress.currentSymbol && (
+              <p className="text-blue-400 text-sm mt-1">
+                Analyzing {progress.currentSymbol}...
+              </p>
+            )}
+            {progress.failedSymbols.length > 0 && (
+              <p className="text-yellow-500 text-xs mt-1">
+                {progress.failedSymbols.length} failed: {progress.failedSymbols.map(f => f.symbol).join(", ")}
+              </p>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -76,7 +108,7 @@ export default function ScreenerResults({
   return (
     <div className="space-y-2">
       <h2 className="text-lg font-semibold text-white mb-4">
-        All Screened Stocks
+        All Screened Stocks ({results.length})
       </h2>
       {results.map((stock) => {
         const topPut = stock.topPuts[0];
