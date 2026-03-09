@@ -11,6 +11,7 @@ import ErrorToast from "@/components/ErrorToast";
 import PutDecisionAssistant from "@/components/PutDecisionAssistant";
 import PricePrediction from "@/components/PricePrediction";
 import ColabConnect from "@/components/ColabConnect";
+import DTESelector, { DEFAULT_DTE, type DTERange } from "@/components/DTESelector";
 
 interface AnalysisData {
   symbol: string;
@@ -127,6 +128,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<"analyze" | "screen">("analyze");
   const [dataSourceStatus, setDataSourceStatus] = useState<"connected" | "degraded" | "down" | null>(null);
   const abortRef = useRef(false);
+  const [dteRange, setDteRange] = useState<DTERange>(DEFAULT_DTE);
 
   // Safely parse API response - handles HTML error pages from Vercel
   const safeParseResponse = async (res: Response): Promise<{ data: Record<string, unknown> | null; rawText: string }> => {
@@ -145,7 +147,7 @@ export default function Home() {
     setActiveTab("analyze");
     setDataSourceStatus(null);
     try {
-      const res = await fetch(`/api/analyze?symbol=${encodeURIComponent(symbol)}`);
+      const res = await fetch(`/api/analyze?symbol=${encodeURIComponent(symbol)}&minDte=${dteRange.min}&maxDte=${dteRange.max}`);
       const { data, rawText } = await safeParseResponse(res);
 
       if (!res.ok) {
@@ -177,7 +179,7 @@ export default function Home() {
       setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [colabUrl]);
+  }, [colabUrl, dteRange]);
 
   // Fetch price prediction for a symbol (with optional Colab GPU inference)
   const fetchPrediction = useCallback(async (symbol: string, colabEndpoint?: string | null) => {
@@ -244,9 +246,10 @@ export default function Home() {
 
         const batchResults = await Promise.allSettled(
           batch.map(async (sym) => {
+            const dteParams = `&minDte=${dteRange.min}&maxDte=${dteRange.max}`;
             const url = vix != null
-              ? `/api/screen-single?symbol=${encodeURIComponent(sym)}&vix=${vix}`
-              : `/api/screen-single?symbol=${encodeURIComponent(sym)}`;
+              ? `/api/screen-single?symbol=${encodeURIComponent(sym)}&vix=${vix}${dteParams}`
+              : `/api/screen-single?symbol=${encodeURIComponent(sym)}${dteParams}`;
             const res = await fetch(url);
             const { data } = await safeParseResponse(res);
 
@@ -361,7 +364,8 @@ export default function Home() {
       setScreenLoading(false);
       setScreenProgress(null);
     }
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dteRange]);
 
   const marketRegime = analysis?.marketRegime ?? screenerData?.marketRegime ?? null;
 
@@ -452,6 +456,8 @@ export default function Home() {
             {screenLoading ? "Screening..." : "Screen Top Stocks"}
           </button>
         </div>
+        {/* DTE Range Selector */}
+        <DTESelector selected={dteRange} onChange={setDteRange} />
       </div>
 
       {/* Error Popup */}

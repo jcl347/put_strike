@@ -42,6 +42,14 @@ export async function GET(request: NextRequest) {
   const vixParam = request.nextUrl.searchParams.get("vix");
   const preVix = vixParam ? parseFloat(vixParam) : null;
 
+  // DTE range from query params (defaults: 14-75)
+  const minDteParam = request.nextUrl.searchParams.get("minDte");
+  const maxDteParam = request.nextUrl.searchParams.get("maxDte");
+  const minDte = minDteParam ? Math.max(1, parseInt(minDteParam, 10)) : 14;
+  const maxDte = maxDteParam ? Math.min(365, parseInt(maxDteParam, 10)) : 75;
+  const fetchMinDte = Math.max(1, minDte - 7);
+  const fetchMaxDte = maxDte + 15;
+
   try {
     // Fetch quote, options, HV, and VIX (if not provided) in parallel
     const promises: [
@@ -70,18 +78,19 @@ export async function GET(request: NextRequest) {
       // Non-critical — proceed without context
     }
 
-    // Fetch additional expirations in the 14-75 DTE window
-    // The initial chain only returns the nearest expiration which may be < 14 DTE
+    // Fetch additional expirations in the requested DTE window
+    // The initial chain only returns the nearest expiration which may be outside the range
     const now = new Date();
     const relevantExpirations = initialChain.expirationDates.filter((d) => {
       const dte = Math.ceil(
         (new Date(d).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
       );
-      return dte >= 14 && dte <= 75;
+      return dte >= fetchMinDte && dte <= fetchMaxDte;
     });
 
-    // Fetch up to 3 additional expirations (balance coverage vs speed for screener)
-    const expirationsToFetch = relevantExpirations.slice(0, 3);
+    // Fetch additional expirations (more for wider DTE ranges)
+    const maxExpirations = maxDte > 75 ? 4 : 3;
+    const expirationsToFetch = relevantExpirations.slice(0, maxExpirations);
     const additionalChains = await Promise.allSettled(
       expirationsToFetch.map((exp) => getOptionsChain(upperSymbol, exp))
     );
@@ -119,7 +128,7 @@ export async function GET(request: NextRequest) {
         if (seen.has(key)) continue;
         seen.add(key);
 
-        if (p.dte < 14 || p.dte > 75 || (p.bid <= 0 && p.lastPrice <= 0)) continue;
+        if (p.dte < minDte || p.dte > maxDte || (p.bid <= 0 && p.lastPrice <= 0)) continue;
 
         const effectiveBid = p.bid > 0 ? p.bid : p.lastPrice;
         const effectiveAsk = p.ask > 0 ? p.ask : p.lastPrice;

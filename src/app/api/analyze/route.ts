@@ -29,6 +29,15 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Invalid symbol format" }, { status: 400 });
   }
 
+  // DTE range from query params (defaults: 14-75 for fetching, 7-90 for filtering)
+  const minDteParam = request.nextUrl.searchParams.get("minDte");
+  const maxDteParam = request.nextUrl.searchParams.get("maxDte");
+  const minDte = minDteParam ? Math.max(1, parseInt(minDteParam, 10)) : 14;
+  const maxDte = maxDteParam ? Math.min(365, parseInt(maxDteParam, 10)) : 75;
+  // Widen the fetch window slightly to ensure edge candidates aren't missed
+  const fetchMinDte = Math.max(1, minDte - 7);
+  const fetchMaxDte = maxDte + 15;
+
   try {
     const [quoteResult, hvResult, vixResult] = await Promise.allSettled([
       getStockQuote(upperSymbol),
@@ -64,16 +73,18 @@ export async function GET(request: NextRequest) {
     // Fetch options chain
     const initialChain = await getOptionsChain(upperSymbol);
 
-    // Fetch chains for expirations in the 14-75 DTE window
+    // Fetch chains for expirations in the requested DTE window
     const now = new Date();
     const relevantExpirations = initialChain.expirationDates.filter((d) => {
       const dte = Math.ceil(
         (new Date(d).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
       );
-      return dte >= 14 && dte <= 75;
+      return dte >= fetchMinDte && dte <= fetchMaxDte;
     });
 
-    const expirationsToFetch = relevantExpirations.slice(0, 4);
+    // Fetch more expirations for wider DTE ranges
+    const maxExpirations = maxDte > 75 ? 6 : 4;
+    const expirationsToFetch = relevantExpirations.slice(0, maxExpirations);
 
     const chainResults = await Promise.allSettled(
       expirationsToFetch.map((exp) => getOptionsChain(upperSymbol, exp))
@@ -99,7 +110,7 @@ export async function GET(request: NextRequest) {
         if (seen.has(key)) continue;
         seen.add(key);
 
-        if (p.dte < 7 || p.dte > 90 || (p.bid <= 0 && p.lastPrice <= 0)) continue;
+        if (p.dte < minDte || p.dte > maxDte || (p.bid <= 0 && p.lastPrice <= 0)) continue;
 
         const effectiveBid = p.bid > 0 ? p.bid : p.lastPrice;
         const effectiveAsk = p.ask > 0 ? p.ask : p.lastPrice;
