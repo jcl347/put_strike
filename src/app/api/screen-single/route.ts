@@ -21,7 +21,7 @@ export const maxDuration = 30;
 /**
  * Lightweight single-stock screener endpoint.
  * Called by the frontend for each stock individually during screening.
- * Only fetches the first options chain (not multiple expirations like /api/analyze).
+ * Fetches up to 3 expirations in the 14-75 DTE window for full coverage.
  *
  * Query params:
  *   symbol: stock ticker (required)
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
         : getVIX().catch(() => 20),
     ];
 
-    const [quote, chain, hv, vix] = await Promise.all(promises);
+    const [quote, initialChain, hv, vix] = await Promise.all(promises);
     const marketRegime = classifyMarketRegime(vix);
 
     // Fetch stock context (earnings, trend, support/resistance) in parallel
@@ -70,7 +70,29 @@ export async function GET(request: NextRequest) {
       // Non-critical — proceed without context
     }
 
-    const puts = chain.options.filter((o) => o.type === "put");
+    // Fetch additional expirations in the 14-75 DTE window
+    // The initial chain only returns the nearest expiration which may be < 14 DTE
+    const now = new Date();
+    const relevantExpirations = initialChain.expirationDates.filter((d) => {
+      const dte = Math.ceil(
+        (new Date(d).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
+      );
+      return dte >= 14 && dte <= 75;
+    });
+
+    // Fetch up to 3 additional expirations (balance coverage vs speed for screener)
+    const expirationsToFetch = relevantExpirations.slice(0, 3);
+    const additionalChains = await Promise.allSettled(
+      expirationsToFetch.map((exp) => getOptionsChain(upperSymbol, exp))
+    );
+
+    const allChains = [initialChain];
+    for (const result of additionalChains) {
+      if (result.status === "fulfilled") {
+        allChains.push(result.value);
+      }
+    }
+
     const riskFreeRate = 0.045;
 
     const companyStability: CompanyStability = {
@@ -85,10 +107,20 @@ export async function GET(request: NextRequest) {
 
     const stabilityResult = scoreCompanyStability(companyStability);
 
+    // Deduplicate and build candidates from all expirations
     // Use lastPrice as fallback when bid is 0 (markets closed / after hours)
-    const candidates: PutCandidate[] = puts
-      .filter((p) => p.dte >= 14 && p.dte <= 75 && (p.bid > 0 || p.lastPrice > 0))
-      .map((p) => {
+    const seen = new Set<string>();
+    const candidates: PutCandidate[] = [];
+
+    for (const chain of allChains) {
+      const puts = chain.options.filter((o) => o.type === "put");
+      for (const p of puts) {
+        const key = `${p.strike}-${p.expiration}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        if (p.dte < 14 || p.dte > 75 || (p.bid <= 0 && p.lastPrice <= 0)) continue;
+
         const effectiveBid = p.bid > 0 ? p.bid : p.lastPrice;
         const effectiveAsk = p.ask > 0 ? p.ask : p.lastPrice;
         const T = p.dte / 365;
@@ -101,7 +133,7 @@ export async function GET(request: NextRequest) {
           q: (quote.dividendYield || 0) / 100,
         });
 
-        return {
+        candidates.push({
           symbol: upperSymbol,
           stockPrice: quote.price,
           strikePrice: p.strike,
@@ -117,8 +149,9 @@ export async function GET(request: NextRequest) {
           gamma: greeks.gamma,
           theta: greeks.theta,
           vega: greeks.vega,
-        };
-      });
+        });
+      }
+    }
 
     const ivRank = hv.hvRank;
     const scored = rankPuts(candidates, ivRank, marketRegime, 8, companyStability);
