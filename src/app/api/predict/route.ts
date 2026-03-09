@@ -127,12 +127,13 @@ export async function GET(request: NextRequest) {
 
     if (colabUrl) {
       try {
-        // Build the feature matrix for the Colab model
-        // Send the raw OHLCV data — Colab computes its own features
+        // Send all available OHLCV data to Colab — it computes features server-side
+        // The iTransformer server needs enough history for feature computation (200+ days ideal)
+        // Send up to 300 days so the server can compute 200-day SMAs and other long-lookback features
         const colabPayload = {
           symbol: upperSymbol,
           current_price: quote.price,
-          features: historyResult.slice(-60).map(d => [
+          features: historyResult.slice(-300).map(d => [
             d.open, d.high, d.low, d.close, d.volume,
           ]),
         };
@@ -141,7 +142,7 @@ export async function GET(request: NextRequest) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(colabPayload),
-          signal: AbortSignal.timeout(10000), // 10s timeout
+          signal: AbortSignal.timeout(15000), // 15s timeout (feature computation takes time)
         });
 
         if (colabRes.ok) {

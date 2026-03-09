@@ -10,6 +10,12 @@ export default function ColabConnect({ onUrlChange }: Props) {
   const [url, setUrl] = useState("");
   const [status, setStatus] = useState<"disconnected" | "checking" | "connected" | "error">("disconnected");
   const [modelInfo, setModelInfo] = useState<string | null>(null);
+  const [modelDetails, setModelDetails] = useState<{
+    features?: number;
+    testAccuracy?: number;
+    parameters?: number;
+    version?: string;
+  } | null>(null);
   const [expanded, setExpanded] = useState(false);
 
   const checkConnection = useCallback(async (testUrl: string) => {
@@ -28,6 +34,12 @@ export default function ColabConnect({ onUrlChange }: Props) {
         const data = await res.json();
         setStatus("connected");
         setModelInfo(data.model ?? "iTransformer");
+        setModelDetails({
+          features: data.features,
+          testAccuracy: data.test_metrics?.directional_accuracy_30d,
+          parameters: data.architecture?.parameters,
+          version: data.version,
+        });
         onUrlChange(cleanUrl);
       } else {
         setStatus("error");
@@ -61,6 +73,7 @@ export default function ColabConnect({ onUrlChange }: Props) {
     setUrl("");
     setStatus("disconnected");
     setModelInfo(null);
+    setModelDetails(null);
     onUrlChange(null);
   };
 
@@ -121,7 +134,19 @@ export default function ColabConnect({ onUrlChange }: Props) {
 
           {status === "connected" && (
             <div className="text-xs text-green-400 bg-green-900/20 border border-green-700/30 rounded px-3 py-2">
-              iTransformer predictions will appear alongside statistical ensemble in the Price Prediction section.
+              <div className="font-medium mb-1">iTransformer connected — predictions will appear in Price Prediction section</div>
+              {modelDetails && (
+                <div className="flex gap-3 text-green-500">
+                  {modelDetails.features && <span>{modelDetails.features} features</span>}
+                  {modelDetails.parameters && (
+                    <span>{modelDetails.parameters > 1e6
+                      ? `${(modelDetails.parameters / 1e6).toFixed(1)}M params`
+                      : `${(modelDetails.parameters / 1e3).toFixed(0)}K params`}</span>
+                  )}
+                  {modelDetails.testAccuracy && <span>{modelDetails.testAccuracy.toFixed(1)}% test accuracy</span>}
+                  {modelDetails.version && <span>v{modelDetails.version}</span>}
+                </div>
+              )}
             </div>
           )}
 
