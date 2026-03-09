@@ -228,14 +228,16 @@ describe("Put Ranking", () => {
     }
   });
 
-  test("filters out puts with zero bid", () => {
+  test("filters out puts with zero bid and zero lastPrice", () => {
     const candidates = [
-      makePut({ bid: 0, ask: 0.1 }),
+      makePut({ bid: 0, ask: 0.1, lastPrice: 0 }),
       makePut({ bid: 3.0, ask: 3.5 }),
     ];
 
     const ranked = rankPuts(candidates, 50, normalRegime, 10);
-    expect(ranked.every((r) => r.bid > 0)).toBe(true);
+    expect(ranked.every((r) => r.bid > 0 || r.lastPrice > 0)).toBe(true);
+    // The zero-bid, zero-lastPrice put should be filtered out
+    expect(ranked.length).toBe(1);
   });
 
   test("filters out puts with DTE < 7", () => {

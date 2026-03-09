@@ -99,8 +99,10 @@ export async function GET(request: NextRequest) {
         if (seen.has(key)) continue;
         seen.add(key);
 
-        if (p.dte < 7 || p.dte > 90 || p.bid <= 0) continue;
+        if (p.dte < 7 || p.dte > 90 || (p.bid <= 0 && p.lastPrice <= 0)) continue;
 
+        const effectiveBid = p.bid > 0 ? p.bid : p.lastPrice;
+        const effectiveAsk = p.ask > 0 ? p.ask : p.lastPrice;
         const T = p.dte / 365;
         const greeks = putGreeks({
           S: quote.price,
@@ -117,8 +119,8 @@ export async function GET(request: NextRequest) {
           strikePrice: p.strike,
           expiration: p.expiration,
           dte: p.dte,
-          bid: p.bid,
-          ask: p.ask,
+          bid: effectiveBid,
+          ask: effectiveAsk,
           lastPrice: p.lastPrice,
           volume: p.volume,
           openInterest: p.openInterest,

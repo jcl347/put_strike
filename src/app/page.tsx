@@ -71,18 +71,21 @@ interface AnalysisData {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ScreenerData = any;
 
-// Full watchlist: 20 high-liquidity stocks across sectors + major ETFs
+// Full watchlist: 30 high-liquidity stocks across sectors + major ETFs
+// Selected for options liquidity, market cap, and sector diversity
 const SCREENER_SYMBOLS = [
   // Mega-cap Tech
-  "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META",
+  "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "AVGO",
   // Finance
-  "JPM", "V", "MA",
+  "JPM", "V", "MA", "GS",
   // Consumer / Healthcare / Industrial
-  "JNJ", "PG", "KO", "WMT", "HD",
-  // ETFs
-  "SPY", "QQQ", "IWM",
-  // Additional high-liquidity
-  "DIS", "PEP", "COST",
+  "JNJ", "PG", "KO", "WMT", "HD", "UNH", "MRK", "ABBV",
+  // Energy / Industrial
+  "XOM", "CAT",
+  // ETFs (broad market, tech, small-cap, semiconductors)
+  "SPY", "QQQ", "IWM", "SMH",
+  // Additional high-liquidity / diversification
+  "DIS", "PEP", "COST", "CRM",
 ];
 
 interface ScreenProgress {
@@ -181,6 +184,7 @@ export default function Home() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let marketRegime: any = null;
     let vix: number | null = null;
+    let noPutsSymbols: string[] = [];
 
     try {
       // Process stocks 2 at a time (each makes 3-4 Yahoo requests server-side)
@@ -223,6 +227,9 @@ export default function Home() {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             if ((data.topPuts as any[])?.length > 0) {
               successfulResults.push(data);
+            } else {
+              // Stock returned OK but had no scored put candidates
+              noPutsSymbols.push(batch[j]);
             }
           } else {
             const errMsg = r.reason?.message ?? "Failed";
@@ -267,16 +274,21 @@ export default function Home() {
         top10,
         results: successfulResults,
         failedSymbols: progress.failedSymbols,
+        noPutsSymbols,
       };
 
       setScreenerData(finalData);
 
-      // Set data source status
-      if (progress.failedSymbols.length > 0 && successfulResults.length > 0) {
+      // Set data source status and messaging
+      const totalFailed = progress.failedSymbols.length;
+      if (totalFailed > 0 && successfulResults.length > 0) {
         setDataSourceStatus("degraded");
-      } else if (progress.failedSymbols.length > 0 && successfulResults.length === 0) {
+      } else if (successfulResults.length === 0 && totalFailed > 0) {
         setDataSourceStatus("down");
         setError("Could not fetch data for any stocks. Yahoo Finance may be down or rate limiting.");
+      } else if (successfulResults.length === 0 && noPutsSymbols.length > 0) {
+        setDataSourceStatus("degraded");
+        setError("Data loaded but no put candidates found. This can happen when markets are closed — try again during market hours (Mon-Fri 9:30 AM - 4:00 PM ET).");
       } else {
         setDataSourceStatus("connected");
       }
@@ -526,7 +538,7 @@ export default function Home() {
           </h2>
           <p className="text-gray-400 max-w-md mx-auto mb-6">
             Search for a stock to analyze its options chain with stability scoring,
-            or run the screener to find the Top 10 best put selling candidates across 20 stocks.
+            or run the screener to find the Top 10 most profitable put selling candidates across 30 stocks.
           </p>
           <div className="flex justify-center gap-3 mb-4">
             {["AAPL", "MSFT", "SPY", "NVDA", "AMZN"].map((sym) => (
@@ -543,7 +555,7 @@ export default function Home() {
             onClick={runScreener}
             className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
           >
-            Screen 20 Stocks for Top 10 Put Sales
+            Screen 30 Stocks for Top 10 Put Sales
           </button>
         </div>
       )}

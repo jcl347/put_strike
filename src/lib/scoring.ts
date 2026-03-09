@@ -245,7 +245,12 @@ export function scorePut(
   const signals: Signal[] = [];
 
   // 1. Premium Yield (annualized return on collateral)
-  const midPrice = (candidate.bid + candidate.ask) / 2;
+  // Use lastPrice as fallback when bid/ask are 0 (after hours / weekends)
+  const midPrice = candidate.bid > 0 && candidate.ask > 0
+    ? (candidate.bid + candidate.ask) / 2
+    : candidate.lastPrice > 0
+    ? candidate.lastPrice
+    : (candidate.bid + candidate.ask) / 2;
   const premiumYield = (midPrice / candidate.strikePrice) * 100;
   const annualizedReturn = premiumYield * (365 / candidate.dte);
 
@@ -408,7 +413,7 @@ export function rankPuts(
 ): ScoredPut[] {
   return candidates
     .map((c) => scorePut(c, ivRank, marketRegime, stability))
-    .filter((s) => s.bid > 0 && s.dte >= 7)
+    .filter((s) => (s.bid > 0 || s.lastPrice > 0) && s.dte >= 7)
     .sort((a, b) => b.score - a.score)
     .slice(0, topN);
 }

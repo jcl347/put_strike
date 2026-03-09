@@ -61,8 +61,10 @@ async function processSymbol(
   const stabilityResult = scoreCompanyStability(companyStability);
 
   const candidates: PutCandidate[] = puts
-    .filter((p) => p.dte >= 14 && p.dte <= 75 && p.bid > 0)
+    .filter((p) => p.dte >= 14 && p.dte <= 75 && (p.bid > 0 || p.lastPrice > 0))
     .map((p) => {
+      const effectiveBid = p.bid > 0 ? p.bid : p.lastPrice;
+      const effectiveAsk = p.ask > 0 ? p.ask : p.lastPrice;
       const T = p.dte / 365;
       const greeks = putGreeks({
         S: quote.price,
@@ -79,8 +81,8 @@ async function processSymbol(
         strikePrice: p.strike,
         expiration: p.expiration,
         dte: p.dte,
-        bid: p.bid,
-        ask: p.ask,
+        bid: effectiveBid,
+        ask: effectiveAsk,
         lastPrice: p.lastPrice,
         volume: p.volume,
         openInterest: p.openInterest,

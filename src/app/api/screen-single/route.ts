@@ -75,9 +75,12 @@ export async function GET(request: NextRequest) {
 
     const stabilityResult = scoreCompanyStability(companyStability);
 
+    // Use lastPrice as fallback when bid is 0 (markets closed / after hours)
     const candidates: PutCandidate[] = puts
-      .filter((p) => p.dte >= 14 && p.dte <= 75 && p.bid > 0)
+      .filter((p) => p.dte >= 14 && p.dte <= 75 && (p.bid > 0 || p.lastPrice > 0))
       .map((p) => {
+        const effectiveBid = p.bid > 0 ? p.bid : p.lastPrice;
+        const effectiveAsk = p.ask > 0 ? p.ask : p.lastPrice;
         const T = p.dte / 365;
         const greeks = putGreeks({
           S: quote.price,
@@ -94,8 +97,8 @@ export async function GET(request: NextRequest) {
           strikePrice: p.strike,
           expiration: p.expiration,
           dte: p.dte,
-          bid: p.bid,
-          ask: p.ask,
+          bid: effectiveBid,
+          ask: effectiveAsk,
           lastPrice: p.lastPrice,
           volume: p.volume,
           openInterest: p.openInterest,
@@ -108,7 +111,7 @@ export async function GET(request: NextRequest) {
       });
 
     const ivRank = hv.hvRank;
-    const scored = rankPuts(candidates, ivRank, marketRegime, 5, companyStability);
+    const scored = rankPuts(candidates, ivRank, marketRegime, 8, companyStability);
 
     return NextResponse.json({
       symbol: upperSymbol,

@@ -102,7 +102,18 @@ export default function ScreenerResults({
   }
 
   if (results.length === 0) {
-    return null;
+    return (
+      <div className="text-center py-12">
+        <div className="text-4xl mb-3">&#128269;</div>
+        <h3 className="text-lg font-medium text-white mb-2">
+          No put selling opportunities found
+        </h3>
+        <p className="text-gray-400 text-sm max-w-md mx-auto">
+          This can happen when markets are closed (weekends / after hours) and option pricing data is unavailable.
+          Try again during regular market hours: Mon-Fri, 9:30 AM - 4:00 PM ET.
+        </p>
+      </div>
+    );
   }
 
   return (
