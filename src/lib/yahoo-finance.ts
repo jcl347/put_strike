@@ -100,6 +100,10 @@ async function withRetry<T>(
 export async function getStockQuote(symbol: string): Promise<StockQuote> {
   const quote: any = await withRetry(() => yahooFinance.quote(symbol));
 
+  if (!quote) {
+    throw new Error(`No quote data returned for ${symbol}. The symbol may be invalid or Yahoo Finance may be unavailable.`);
+  }
+
   return {
     symbol: quote.symbol ?? symbol,
     price: quote.regularMarketPrice ?? 0,
@@ -128,6 +132,10 @@ export async function getOptionsChain(
       expirationDate ? { date: new Date(expirationDate) } : {}
     )
   );
+
+  if (!result) {
+    throw new Error(`No options data returned for ${symbol}. The symbol may not have options or Yahoo Finance may be unavailable.`);
+  }
 
   const now = new Date();
   const options: OptionContract[] = [];
@@ -202,6 +210,10 @@ export async function getHistoricalVolatility(
     })
   );
 
+  if (!history) {
+    return { currentHV: 0, hvHigh: 0, hvLow: 0, hvRank: 50 };
+  }
+
   const quotes = history.quotes ?? [];
   if (quotes.length < 22) {
     return { currentHV: 0, hvHigh: 0, hvLow: 0, hvRank: 50 };
@@ -267,6 +279,10 @@ export async function searchSymbols(
   query: string
 ): Promise<{ symbol: string; name: string; type: string }[]> {
   const results: any = await withRetry(() => yahooFinance.search(query));
+
+  if (!results) {
+    return [];
+  }
 
   return (results.quotes ?? [])
     .filter(
