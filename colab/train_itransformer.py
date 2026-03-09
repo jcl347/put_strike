@@ -1,8 +1,13 @@
 """
 PutStrike iTransformer Training & Inference Server for Google Colab
 
+NOTE: The Jupyter notebook version (train_itransformer.ipynb) is the recommended
+way to train. This .py file is kept for reference and compatibility.
+For the latest architecture improvements (per-variate projections, walk-forward
+validation, Huber loss, directional accuracy), use the notebook.
+
 This script does three things:
-1. Downloads historical market data and computes 300+ features
+1. Downloads historical market data and computes 80+ features
 2. Trains an iTransformer model for price/volatility forecasting
 3. Starts a Flask inference server (exposed via ngrok) that PutStrike can call
 
@@ -14,7 +19,7 @@ USAGE IN GOOGLE COLAB:
     5. Copy the ngrok URL and paste it into PutStrike settings
 
 REQUIREMENTS (installed automatically):
-    pip install torch numpy pandas yfinance flask pyngrok onnx onnxruntime
+    pip install torch numpy pandas yfinance flask pyngrok scikit-learn
 """
 
 # ═══════════════════════════════════════════════════════════════
@@ -667,19 +672,23 @@ def health():
 @app.route("/predict", methods=["POST"])
 def predict():
     """
-    Run prediction on feature data.
+    Run prediction on OHLCV data.
+
+    The server computes features from raw OHLCV, normalizes them,
+    and runs the iTransformer model.
 
     Expects JSON:
     {
-        "features": [[...], [...], ...]  // (lookback, num_features) array
-        "current_price": 150.0
-        "symbol": "AAPL"
+        "symbol": "AAPL",
+        "current_price": 150.0,
+        "features": [[open, high, low, close, volume], ...]  // 60+ days of OHLCV
     }
 
     Returns:
     {
-        "forecast": [0.01, 0.02, ...]  // predicted returns for each day
+        "forecast_returns": [0.01, 0.02, ...]
         "predicted_prices": [151.5, 153.0, ...]
+        "prediction_30d": 2.5,  // percentage
         "confidence": { "lower_68": [...], "upper_68": [...], ... }
         "model": "iTransformer"
     }
@@ -689,38 +698,66 @@ def predict():
 
     try:
         data = request.get_json()
-        features = np.array(data["features"], dtype=np.float32)
+        raw_ohlcv = data["features"]  # (N, 5) — OHLCV from the API
         current_price = float(data.get("current_price", 100))
         symbol = data.get("symbol", "UNKNOWN")
 
-        # Ensure correct shape
-        if features.ndim == 2:
-            features = features[np.newaxis, ...]  # Add batch dim
+        # Convert raw OHLCV to DataFrame for feature computation
+        ohlcv_df = pd.DataFrame(
+            raw_ohlcv,
+            columns=["Open", "High", "Low", "Close", "Volume"]
+        )
+        ohlcv_df.index = pd.date_range(
+            end=pd.Timestamp.now().normalize(),
+            periods=len(ohlcv_df),
+            freq="B"
+        )
 
-        # Validate dimensions
-        if features.shape[1] != LOOKBACK_WINDOW:
+        if len(ohlcv_df) < LOOKBACK_WINDOW:
             return jsonify({
-                "error": f"Expected lookback={LOOKBACK_WINDOW}, got {features.shape[1]}"
+                "error": f"Need at least {LOOKBACK_WINDOW} days, got {len(ohlcv_df)}"
             }), 400
-        if features.shape[2] != _metadata["num_features"]:
-            return jsonify({
-                "error": f"Expected {_metadata['num_features']} features, got {features.shape[2]}"
-            }), 400
+
+        # Compute features from OHLCV (same function used in training)
+        features_df = compute_features(ohlcv_df)
+
+        # Ensure we have the right columns in the right order
+        feat_cols = [f for f in _feature_names if f in features_df.columns]
+        missing_cols = [f for f in _feature_names if f not in features_df.columns]
+        feat_values = features_df[feat_cols].values
+        if missing_cols:
+            padding = np.zeros((feat_values.shape[0], len(missing_cols)))
+            feat_values = np.hstack([feat_values, padding])
+
+        # Z-score normalize
+        feat_mean = np.nanmean(feat_values, axis=0, keepdims=True)
+        feat_std = np.nanstd(feat_values, axis=0, keepdims=True) + 1e-10
+        feat_norm = (feat_values - feat_mean) / feat_std
+        feat_norm = np.clip(feat_norm, -5, 5)
+
+        # Take last LOOKBACK_WINDOW days
+        if feat_norm.shape[0] >= LOOKBACK_WINDOW:
+            input_data = feat_norm[-LOOKBACK_WINDOW:]
+        else:
+            pad_size = LOOKBACK_WINDOW - feat_norm.shape[0]
+            input_data = np.vstack([
+                np.zeros((pad_size, feat_norm.shape[1])),
+                feat_norm
+            ])
 
         # Run inference
         device = next(_model.parameters()).device
         with torch.no_grad():
-            x = torch.FloatTensor(features).to(device)
+            x = torch.FloatTensor(input_data).unsqueeze(0).to(device)
             forecast = _model(x).cpu().numpy()[0]  # (horizon,)
 
         # Convert returns to prices
         predicted_prices = current_price * (1 + forecast)
 
-        # Estimate confidence bands (using model uncertainty approximation)
-        # Simple: use rolling volatility from features to scale bands
-        vol_feature_idx = _feature_names.index("volatility_20d") if "volatility_20d" in _feature_names else -1
-        if vol_feature_idx >= 0:
-            vol = abs(features[0, -1, vol_feature_idx]) * 0.2 + 0.15  # Denormalize approx
+        # Confidence bands
+        vol_idx = _feature_names.index("volatility_20d") if "volatility_20d" in _feature_names else -1
+        if vol_idx >= 0 and vol_idx < feat_values.shape[1]:
+            vol = max(0.05, min(1.0, abs(feat_values[-1, vol_idx])))
         else:
             vol = 0.2
 
@@ -728,11 +765,15 @@ def predict():
         days = np.arange(1, FORECAST_HORIZON + 1)
         diffusion = daily_vol * np.sqrt(days)
 
+        prediction_30d = float(forecast[-1]) * 100
+
         response = {
             "symbol": symbol,
             "model": "iTransformer",
+            "model_version": "1.0",
             "forecast_returns": forecast.tolist(),
             "predicted_prices": predicted_prices.tolist(),
+            "prediction_30d": prediction_30d,
             "current_price": current_price,
             "horizon_days": FORECAST_HORIZON,
             "confidence": {
@@ -741,6 +782,7 @@ def predict():
                 "lower_68": (current_price * (1 + forecast - diffusion)).tolist(),
                 "upper_68": (current_price * (1 + forecast + diffusion)).tolist(),
             },
+            "model_confidence": 0.5,  # Default for v1
             "metadata": {
                 "num_features": _metadata["num_features"],
                 "lookback": LOOKBACK_WINDOW,
@@ -751,7 +793,8 @@ def predict():
         return jsonify(response)
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        import traceback
+        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
 
 
 @app.route("/feature-names", methods=["GET"])
