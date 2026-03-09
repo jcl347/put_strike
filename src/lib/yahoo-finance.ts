@@ -281,6 +281,206 @@ export async function searchSymbols(
 }
 
 /**
+ * Fetch earnings date + trend analysis for a symbol.
+ * Uses quoteSummary for earnings dates and chart data for trend/support levels.
+ */
+export interface StockContext {
+  earningsDate: string | null;    // Next earnings date (ISO string)
+  daysToEarnings: number | null;  // Days until next earnings
+  earningsWarning: boolean;       // True if earnings within 14 days
+  trendDirection: "up" | "down" | "sideways";
+  trendStrength: number;          // 0-100, how strong the trend is
+  sma20: number;
+  sma50: number;
+  sma200: number;
+  priceVsSMA20: number;           // % above/below SMA20
+  priceVsSMA50: number;
+  priceVsSMA200: number;
+  rsi14: number;                  // RSI(14)
+  supportLevel: number;           // Estimated support (recent swing low)
+  resistanceLevel: number;        // Estimated resistance (recent swing high)
+  avgTrueRange: number;           // ATR(14) for volatility sizing
+  recentHighs: number[];          // Last 3 swing highs
+  recentLows: number[];           // Last 3 swing lows
+}
+
+export async function getStockContext(
+  symbol: string,
+  currentPrice: number
+): Promise<StockContext> {
+  const endDate = new Date();
+  const startDate = new Date();
+  startDate.setMonth(startDate.getMonth() - 12); // 1 year of data
+
+  // Fetch earnings date and historical data in parallel
+  const [earningsResult, historyResult] = await Promise.allSettled([
+    withRetry(() =>
+      yahooFinance.quoteSummary(symbol, { modules: ["calendarEvents"] })
+    ),
+    withRetry(() =>
+      yahooFinance.chart(symbol, {
+        period1: startDate,
+        period2: endDate,
+        interval: "1d",
+      })
+    ),
+  ]);
+
+  // Parse earnings date
+  let earningsDate: string | null = null;
+  let daysToEarnings: number | null = null;
+  let earningsWarning = false;
+
+  if (earningsResult.status === "fulfilled") {
+    const cal = (earningsResult.value as any)?.calendarEvents;
+    const eDates = cal?.earnings?.earningsDate;
+    if (Array.isArray(eDates) && eDates.length > 0) {
+      const nextEarnings = new Date(eDates[0]);
+      earningsDate = nextEarnings.toISOString().split("T")[0];
+      daysToEarnings = Math.ceil(
+        (nextEarnings.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+      );
+      earningsWarning = daysToEarnings >= 0 && daysToEarnings <= 14;
+    }
+  }
+
+  // Default context for when historical data is unavailable
+  const defaultCtx: StockContext = {
+    earningsDate,
+    daysToEarnings,
+    earningsWarning,
+    trendDirection: "sideways",
+    trendStrength: 50,
+    sma20: currentPrice,
+    sma50: currentPrice,
+    sma200: currentPrice,
+    priceVsSMA20: 0,
+    priceVsSMA50: 0,
+    priceVsSMA200: 0,
+    rsi14: 50,
+    supportLevel: currentPrice * 0.95,
+    resistanceLevel: currentPrice * 1.05,
+    avgTrueRange: currentPrice * 0.02,
+    recentHighs: [],
+    recentLows: [],
+  };
+
+  if (historyResult.status !== "fulfilled") return defaultCtx;
+
+  const quotes = (historyResult.value as any).quotes ?? [];
+  if (quotes.length < 50) return defaultCtx;
+
+  // Extract closes and highs/lows
+  const closes: number[] = quotes.map((q: any) => q.close).filter((c: number) => c > 0);
+  const highs: number[] = quotes.map((q: any) => q.high).filter((h: number) => h > 0);
+  const lows: number[] = quotes.map((q: any) => q.low).filter((l: number) => l > 0);
+
+  if (closes.length < 50) return defaultCtx;
+
+  // SMAs
+  const sma = (arr: number[], period: number) => {
+    if (arr.length < period) return arr[arr.length - 1];
+    const slice = arr.slice(-period);
+    return slice.reduce((a, b) => a + b, 0) / period;
+  };
+
+  const sma20 = sma(closes, 20);
+  const sma50 = sma(closes, 50);
+  const sma200 = closes.length >= 200 ? sma(closes, 200) : sma50;
+
+  // RSI(14)
+  const rsiPeriod = 14;
+  const rsiCloses = closes.slice(-rsiPeriod - 1);
+  let gains = 0, losses = 0;
+  for (let i = 1; i < rsiCloses.length; i++) {
+    const diff = rsiCloses[i] - rsiCloses[i - 1];
+    if (diff > 0) gains += diff;
+    else losses += Math.abs(diff);
+  }
+  const avgGain = gains / rsiPeriod;
+  const avgLoss = losses / rsiPeriod;
+  const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+  const rsi14 = 100 - 100 / (1 + rs);
+
+  // ATR(14)
+  const atrPeriod = 14;
+  const recentQuotes = quotes.slice(-atrPeriod - 1);
+  let atrSum = 0;
+  for (let i = 1; i < recentQuotes.length; i++) {
+    const h = recentQuotes[i].high ?? 0;
+    const l = recentQuotes[i].low ?? 0;
+    const pc = recentQuotes[i - 1].close ?? 0;
+    const tr = Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
+    atrSum += tr;
+  }
+  const avgTrueRange = atrSum / atrPeriod;
+
+  // Swing highs and lows (last 60 days, looking for 5-day pivots)
+  const recentHighs: number[] = [];
+  const recentLows: number[] = [];
+  const lookback = Math.min(60, highs.length - 5);
+  const startIdx = highs.length - lookback;
+
+  for (let i = startIdx + 2; i < highs.length - 2; i++) {
+    if (highs[i] > highs[i - 1] && highs[i] > highs[i - 2] &&
+        highs[i] > highs[i + 1] && highs[i] > highs[i + 2]) {
+      recentHighs.push(highs[i]);
+    }
+    if (lows[i] < lows[i - 1] && lows[i] < lows[i - 2] &&
+        lows[i] < lows[i + 1] && lows[i] < lows[i + 2]) {
+      recentLows.push(lows[i]);
+    }
+  }
+
+  // Support = lowest recent swing low, Resistance = highest recent swing high
+  const supportLevel = recentLows.length > 0
+    ? Math.min(...recentLows.slice(-3))
+    : Math.min(...lows.slice(-20));
+  const resistanceLevel = recentHighs.length > 0
+    ? Math.max(...recentHighs.slice(-3))
+    : Math.max(...highs.slice(-20));
+
+  // Trend detection
+  const priceVsSMA20 = ((currentPrice - sma20) / sma20) * 100;
+  const priceVsSMA50 = ((currentPrice - sma50) / sma50) * 100;
+  const priceVsSMA200 = ((currentPrice - sma200) / sma200) * 100;
+
+  let trendDirection: "up" | "down" | "sideways";
+  let trendStrength: number;
+
+  if (currentPrice > sma20 && sma20 > sma50 && currentPrice > sma200) {
+    trendDirection = "up";
+    trendStrength = Math.min(100, 50 + Math.abs(priceVsSMA50) * 3);
+  } else if (currentPrice < sma20 && sma20 < sma50 && currentPrice < sma200) {
+    trendDirection = "down";
+    trendStrength = Math.min(100, 50 + Math.abs(priceVsSMA50) * 3);
+  } else {
+    trendDirection = "sideways";
+    trendStrength = Math.max(0, 50 - Math.abs(priceVsSMA50) * 3);
+  }
+
+  return {
+    earningsDate,
+    daysToEarnings,
+    earningsWarning,
+    trendDirection,
+    trendStrength,
+    sma20: Math.round(sma20 * 100) / 100,
+    sma50: Math.round(sma50 * 100) / 100,
+    sma200: Math.round(sma200 * 100) / 100,
+    priceVsSMA20: Math.round(priceVsSMA20 * 100) / 100,
+    priceVsSMA50: Math.round(priceVsSMA50 * 100) / 100,
+    priceVsSMA200: Math.round(priceVsSMA200 * 100) / 100,
+    rsi14: Math.round(rsi14 * 10) / 10,
+    supportLevel: Math.round(supportLevel * 100) / 100,
+    resistanceLevel: Math.round(resistanceLevel * 100) / 100,
+    avgTrueRange: Math.round(avgTrueRange * 100) / 100,
+    recentHighs: recentHighs.slice(-3).map(h => Math.round(h * 100) / 100),
+    recentLows: recentLows.slice(-3).map(l => Math.round(l * 100) / 100),
+  };
+}
+
+/**
  * Process symbols in sequential batches to avoid Yahoo rate limiting.
  * Runs batchSize symbols concurrently, waits between batches.
  * This replaced the previous approach of firing all 18 stocks in parallel

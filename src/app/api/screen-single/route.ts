@@ -4,6 +4,7 @@ import {
   getStockQuote,
   getHistoricalVolatility,
   getVIX,
+  getStockContext,
 } from "@/lib/yahoo-finance";
 import { putGreeks } from "@/lib/black-scholes";
 import {
@@ -59,6 +60,15 @@ export async function GET(request: NextRequest) {
 
     const [quote, chain, hv, vix] = await Promise.all(promises);
     const marketRegime = classifyMarketRegime(vix);
+
+    // Fetch stock context (earnings, trend, support/resistance) in parallel
+    // This is non-blocking — if it fails, we proceed without it
+    let stockContext = null;
+    try {
+      stockContext = await getStockContext(upperSymbol, quote.price);
+    } catch {
+      // Non-critical — proceed without context
+    }
 
     const puts = chain.options.filter((o) => o.type === "put");
     const riskFreeRate = 0.045;
@@ -122,6 +132,7 @@ export async function GET(request: NextRequest) {
       topPuts: scored,
       marketRegime,
       vix,
+      context: stockContext,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Analysis failed";

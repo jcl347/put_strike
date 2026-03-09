@@ -8,6 +8,8 @@ import PutTable from "@/components/PutTable";
 import ScreenerResults from "@/components/ScreenerResults";
 import Top10Puts from "@/components/Top10Puts";
 import ErrorToast from "@/components/ErrorToast";
+import PutDecisionAssistant from "@/components/PutDecisionAssistant";
+import PricePrediction from "@/components/PricePrediction";
 
 interface AnalysisData {
   symbol: string;
@@ -71,21 +73,33 @@ interface AnalysisData {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ScreenerData = any;
 
-// Full watchlist: 30 high-liquidity stocks across sectors + major ETFs
-// Selected for options liquidity, market cap, and sector diversity
+// 80+ high-liquidity optionable stocks across all sectors + major ETFs
+// Selected for: options volume, tight spreads, market cap, sector diversity
+// Optimized for Schwab cash-secured put selling
 const SCREENER_SYMBOLS = [
-  // Mega-cap Tech
+  // ── Mega-cap Tech (highest options liquidity) ──
   "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "AVGO",
-  // Finance
-  "JPM", "V", "MA", "GS",
-  // Consumer / Healthcare / Industrial
-  "JNJ", "PG", "KO", "WMT", "HD", "UNH", "MRK", "ABBV",
-  // Energy / Industrial
-  "XOM", "CAT",
-  // ETFs (broad market, tech, small-cap, semiconductors)
-  "SPY", "QQQ", "IWM", "SMH",
-  // Additional high-liquidity / diversification
-  "DIS", "PEP", "COST", "CRM",
+  "ORCL", "CRM", "ADBE", "AMD", "INTC", "CSCO", "IBM",
+  // ── Finance ──
+  "JPM", "V", "MA", "GS", "BAC", "WFC", "MS", "BLK", "AXP", "C",
+  // ── Healthcare ──
+  "UNH", "JNJ", "MRK", "ABBV", "LLY", "PFE", "ABT", "TMO", "AMGN", "MDT",
+  // ── Consumer Staples ──
+  "PG", "KO", "PEP", "COST", "WMT", "MO", "PM", "CL", "MDLZ",
+  // ── Consumer Discretionary ──
+  "HD", "MCD", "NKE", "SBUX", "TGT", "LOW",
+  // ── Energy ──
+  "XOM", "CVX", "COP", "SLB", "EOG",
+  // ── Industrial ──
+  "CAT", "HON", "UPS", "BA", "GE", "DE", "RTX", "LMT",
+  // ── Utilities / REITs (defensive, high-yield) ──
+  "NEE", "DUK", "SO", "D",
+  // ── Materials ──
+  "LIN", "APD", "FCX",
+  // ── Communication ──
+  "DIS", "NFLX", "CMCSA", "T", "VZ",
+  // ── ETFs (broad, sector, volatility) ──
+  "SPY", "QQQ", "IWM", "DIA", "SMH", "XLF", "XLE", "XLK", "XLV", "GLD", "EEM",
 ];
 
 interface ScreenProgress {
@@ -95,9 +109,14 @@ interface ScreenProgress {
   failedSymbols: { symbol: string; error: string }[];
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type PredictionData = any;
+
 export default function Home() {
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
   const [screenerData, setScreenerData] = useState<ScreenerData | null>(null);
+  const [prediction, setPrediction] = useState<PredictionData | null>(null);
+  const [predictionLoading, setPredictionLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [screenLoading, setScreenLoading] = useState(false);
   const [screenProgress, setScreenProgress] = useState<ScreenProgress | null>(null);
@@ -141,6 +160,8 @@ export default function Home() {
       }
       setAnalysis(data as unknown as AnalysisData);
       setDataSourceStatus("connected");
+      // Trigger prediction in background
+      fetchPrediction(symbol);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Analysis failed";
       if (msg.includes("fetch failed") || msg.includes("Failed to fetch")) {
@@ -152,6 +173,22 @@ export default function Home() {
       setAnalysis(null);
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  // Fetch price prediction for a symbol
+  const fetchPrediction = useCallback(async (symbol: string) => {
+    setPredictionLoading(true);
+    try {
+      const res = await fetch(`/api/predict?symbol=${encodeURIComponent(symbol)}`);
+      const { data } = await safeParseResponse(res);
+      if (res.ok && data) {
+        setPrediction(data);
+      }
+    } catch {
+      // Non-critical — prediction is supplementary
+    } finally {
+      setPredictionLoading(false);
     }
   }, []);
 
@@ -415,6 +452,32 @@ export default function Home() {
             hv={analysis.historicalVolatility}
           />
 
+          {/* Decision Assistant - Go/No-Go Checklist */}
+          <PutDecisionAssistant
+            data={{
+              symbol: analysis.symbol,
+              price: analysis.quote.price,
+              ivRank: analysis.historicalVolatility.hvRank,
+              beta: analysis.quote.beta,
+              marketCap: analysis.quote.marketCap,
+              dividendYield: analysis.quote.dividendYield,
+              stabilityScore: analysis.stability?.score ?? 50,
+              vix: analysis.marketRegime?.vix ?? 20,
+              context: (analysis as unknown as Record<string, unknown>).context as null,
+            }}
+          />
+
+          {/* Price Prediction */}
+          {predictionLoading && (
+            <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-6 text-center">
+              <div className="w-8 h-8 border-2 border-gray-600 border-t-blue-400 rounded-full animate-spin mx-auto mb-3" />
+              <p className="text-gray-400 text-sm">Running prediction models ({'>'}300 features)...</p>
+            </div>
+          )}
+          {prediction && !predictionLoading && prediction.symbol === analysis.symbol && (
+            <PricePrediction prediction={prediction} />
+          )}
+
           {/* Company Stability Card */}
           {analysis.stability && (
             <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
@@ -472,10 +535,10 @@ export default function Home() {
             />
           </div>
 
-          {/* Strategy Guide */}
+          {/* Strategy Guide - Schwab-Optimized */}
           <div className="bg-gray-800/30 border border-gray-700/50 rounded-lg p-4">
             <h3 className="text-sm font-medium text-gray-400 mb-3">
-              Strategy Reference
+              Schwab Cash-Secured Put Strategy Reference
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
               <div>
@@ -483,9 +546,11 @@ export default function Home() {
                 <ul className="text-gray-400 space-y-1 list-disc list-inside">
                   <li>Delta: -0.15 to -0.30 (sweet spot)</li>
                   <li>DTE: 30-45 days optimal</li>
-                  <li>HV Rank &gt; 30% (ideally &gt; 50%)</li>
-                  <li>Strike 5-15% below current price</li>
+                  <li>IV Rank &gt; 50% (sell rich premium)</li>
+                  <li>Strike at/below support level</li>
                   <li>Stability score &gt; 60</li>
+                  <li>No earnings within DTE window</li>
+                  <li>Not in a clear downtrend</li>
                 </ul>
               </div>
               <div>
@@ -494,14 +559,18 @@ export default function Home() {
                   <li>Close at 50% of max profit</li>
                   <li>Stop loss at 2x premium received</li>
                   <li>Roll at 21 DTE if still profitable</li>
+                  <li>Roll down and out for net credit only</li>
                   <li>Never hold through earnings</li>
+                  <li>Know when to take assignment</li>
                 </ul>
               </div>
               <div>
-                <h4 className="text-white font-medium mb-1">Risk Management</h4>
+                <h4 className="text-white font-medium mb-1">Schwab Risk Rules</h4>
                 <ul className="text-gray-400 space-y-1 list-disc list-inside">
-                  <li>Max 5% of portfolio per position</li>
-                  <li>Only sell puts on stocks you&apos;d own</li>
+                  <li>Cash-secured: full collateral reserved</li>
+                  <li>Max 5-10% of capital per position</li>
+                  <li>Only sell on stocks you&apos;d own</li>
+                  <li>Watch ex-dividend for early assignment</li>
                   <li>Reduce size when VIX &gt; 30</li>
                   <li>Prefer beta &lt; 1.3 underlyings</li>
                 </ul>
@@ -517,6 +586,31 @@ export default function Home() {
           {/* Top 10 Picks */}
           {screenerData?.top10 && screenerData.top10.length > 0 && !screenLoading && (
             <Top10Puts puts={screenerData.top10} />
+          )}
+
+          {/* Decision Assistant for top stocks */}
+          {screenerData?.results?.length > 0 && !screenLoading && (
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium text-gray-400">
+                Decision Checklist (Top {Math.min(5, screenerData.results.length)} Stocks)
+              </h3>
+              {screenerData.results.slice(0, 5).map((stock: ScreenerData) => (
+                <PutDecisionAssistant
+                  key={stock.symbol}
+                  data={{
+                    symbol: stock.symbol,
+                    price: stock.quote?.price ?? 0,
+                    ivRank: stock.ivRank ?? 50,
+                    beta: stock.quote?.beta ?? 1,
+                    marketCap: stock.quote?.marketCap ?? 0,
+                    dividendYield: stock.quote?.dividendYield ?? 0,
+                    stabilityScore: stock.stability?.score ?? 50,
+                    vix: screenerData.marketRegime?.vix ?? 20,
+                    context: stock.context ?? null,
+                  }}
+                />
+              ))}
+            </div>
           )}
 
           {/* Full Results */}
@@ -537,8 +631,8 @@ export default function Home() {
             Find Optimal Put Selling Opportunities
           </h2>
           <p className="text-gray-400 max-w-md mx-auto mb-6">
-            Search for a stock to analyze its options chain with stability scoring,
-            or run the screener to find the Top 10 most profitable put selling candidates across 30 stocks.
+            Search for a stock to analyze with price prediction and decision assistance,
+            or run the screener to find the Top 10 most profitable put selling candidates across 80+ stocks.
           </p>
           <div className="flex justify-center gap-3 mb-4">
             {["AAPL", "MSFT", "SPY", "NVDA", "AMZN"].map((sym) => (
@@ -555,7 +649,7 @@ export default function Home() {
             onClick={runScreener}
             className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
           >
-            Screen 30 Stocks for Top 10 Put Sales
+            Screen 80+ Stocks for Top 10 Put Sales
           </button>
         </div>
       )}
