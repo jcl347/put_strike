@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { getChecklistSummary, type ChecklistInput, type StockContext } from "@/lib/checklist";
 
 interface Top10Put {
   symbol: string;
@@ -21,6 +22,8 @@ interface Top10Put {
   openInterest: number;
   recommendation: string;
   signals: { name: string; value: string; sentiment: string; weight: number }[];
+  // Checklist context (passed through from screener)
+  _checklistInput?: ChecklistInput;
 }
 
 interface Top10PutsProps {
@@ -41,6 +44,18 @@ const recLabels: Record<string, string> = {
   AVOID: "Avoid",
 };
 
+const flagColors = {
+  pass: "bg-green-900/40 text-green-400 border-green-700/30",
+  warn: "bg-yellow-900/40 text-yellow-400 border-yellow-700/30",
+  fail: "bg-red-900/40 text-red-400 border-red-700/30",
+};
+
+const verdictIcons = {
+  "SELL PUT": { icon: "\u2713", color: "text-green-400" },
+  "CAUTION": { icon: "!", color: "text-yellow-400" },
+  "AVOID": { icon: "\u2717", color: "text-red-400" },
+};
+
 export default function Top10Puts({ puts }: Top10PutsProps) {
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
 
@@ -53,7 +68,7 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
           Top 10 Put Sales Today
         </h2>
         <span className="text-xs text-gray-500">
-          Ranked by option quality + company stability
+          Ranked by option quality + company stability + checklist
         </span>
       </div>
 
@@ -62,6 +77,11 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
           const colors = recColors[put.recommendation] ?? recColors.NEUTRAL;
           const isExpanded = expandedRow === i;
           const midPrice = (put.bid + put.ask) / 2;
+
+          // Evaluate checklist if context is available
+          const summary = put._checklistInput
+            ? getChecklistSummary(put._checklistInput)
+            : null;
 
           return (
             <div
@@ -101,9 +121,16 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
                   </div>
                 </div>
 
-                {/* Symbol & Company */}
-                <div className="w-32 min-w-0">
-                  <div className="text-white font-bold">{put.symbol}</div>
+                {/* Symbol & Company + checklist verdict */}
+                <div className="w-36 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-white font-bold">{put.symbol}</span>
+                    {summary && (
+                      <span className={`text-xs font-bold ${verdictIcons[summary.verdict].color}`} title={`${summary.passes}/${summary.items.length} checks pass`}>
+                        {verdictIcons[summary.verdict].icon}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-xs text-gray-500 truncate">
                     {put.companyName}
                   </div>
@@ -116,6 +143,21 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
                   >
                     {recLabels[put.recommendation] ?? put.recommendation}
                   </span>
+                </div>
+
+                {/* Key checklist flags */}
+                <div className="w-40 hidden lg:flex items-center gap-1 flex-wrap">
+                  {summary?.flags.slice(0, 3).map((flag, fi) => (
+                    <span
+                      key={fi}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${flagColors[flag.status]}`}
+                    >
+                      {flag.short}
+                    </span>
+                  ))}
+                  {!summary && (
+                    <span className="text-[10px] text-gray-600">No context</span>
+                  )}
                 </div>
 
                 {/* Strike & Exp */}
@@ -173,13 +215,41 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
 
                 {/* Expand */}
                 <div className="w-6 text-gray-500 text-sm ml-auto">
-                  {isExpanded ? "▲" : "▼"}
+                  {isExpanded ? "\u25B2" : "\u25BC"}
                 </div>
               </div>
 
               {/* Expanded details */}
               {isExpanded && (
                 <div className="px-4 pb-4 pt-1 border-t border-gray-700/50">
+                  {/* Checklist summary when expanded */}
+                  {summary && (
+                    <div className="mb-3 p-2 bg-gray-900/50 rounded-lg border border-gray-700/50">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className={`font-bold text-sm ${verdictIcons[summary.verdict].color}`}>
+                          {summary.verdict}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          {summary.passes} pass, {summary.warns} caution, {summary.fails} fail
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-1.5">
+                        {summary.items.map((item, idx) => (
+                          <div key={idx} className="flex items-center gap-1.5 text-xs">
+                            <span className={`font-bold ${
+                              item.status === "pass" ? "text-green-400" :
+                              item.status === "warn" ? "text-yellow-400" : "text-red-400"
+                            }`}>
+                              {item.status === "pass" ? "\u2713" : item.status === "warn" ? "!" : "\u2717"}
+                            </span>
+                            <span className="text-gray-300">{item.label}</span>
+                            <span className="text-gray-600 truncate">{item.detail}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     {/* Trade Details */}
                     <div>
