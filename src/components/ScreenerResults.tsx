@@ -13,6 +13,10 @@ interface ScreenerStock {
     changePercent: number;
   };
   ivRank: number;
+  stability: {
+    score: number;
+    signals: { name: string; value: string; sentiment: string; weight: number }[];
+  };
   topPuts: Array<{
     symbol: string;
     stockPrice: number;
@@ -32,6 +36,7 @@ interface ScreenerStock {
     annualizedReturn: number;
     distanceOTM: number;
     bidAskSpread: number;
+    stabilityScore: number;
     recommendation: string;
     signals: { name: string; value: string; sentiment: string; weight: number }[];
   }>;
@@ -58,7 +63,7 @@ export default function ScreenerResults({
           Screening stocks for put selling opportunities...
         </p>
         <p className="text-gray-500 text-sm mt-1">
-          This may take 15-30 seconds while fetching live options data.
+          Processing in batches to avoid rate limiting. This may take 20-40 seconds.
         </p>
       </div>
     );
@@ -71,7 +76,7 @@ export default function ScreenerResults({
   return (
     <div className="space-y-2">
       <h2 className="text-lg font-semibold text-white mb-4">
-        Top Put Selling Opportunities
+        All Screened Stocks
       </h2>
       {results.map((stock) => {
         const topPut = stock.topPuts[0];
@@ -121,6 +126,20 @@ export default function ScreenerResults({
                     }`}
                   >
                     {topPut.score.toFixed(0)}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs text-gray-500">Stability</div>
+                  <div
+                    className={`font-medium ${
+                      stock.stability.score >= 70
+                        ? "text-green-400"
+                        : stock.stability.score >= 50
+                        ? "text-yellow-400"
+                        : "text-red-400"
+                    }`}
+                  >
+                    {stock.stability.score.toFixed(0)}
                   </div>
                 </div>
                 <div className="text-right">

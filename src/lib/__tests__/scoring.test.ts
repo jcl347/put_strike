@@ -20,7 +20,9 @@ import {
   scorePut,
   classifyMarketRegime,
   rankPuts,
+  scoreCompanyStability,
   type PutCandidate,
+  type CompanyStability,
 } from "../scoring";
 
 function makePut(overrides: Partial<PutCandidate> = {}): PutCandidate {
@@ -244,6 +246,92 @@ describe("Put Ranking", () => {
 
     const ranked = rankPuts(candidates, 50, normalRegime, 10);
     expect(ranked.every((r) => r.dte >= 7)).toBe(true);
+  });
+});
+
+describe("Company Stability Scoring", () => {
+  function makeStability(overrides: Partial<CompanyStability> = {}): CompanyStability {
+    return {
+      marketCap: 200e9,
+      beta: 1.0,
+      dividendYield: 1.5,
+      fiftyTwoWeekLow: 140,
+      fiftyTwoWeekHigh: 200,
+      currentPrice: 180,
+      trailingPE: 25,
+      ...overrides,
+    };
+  }
+
+  test("mega cap low-beta dividend payer scores highly", () => {
+    const stable = makeStability({
+      marketCap: 2500e9,
+      beta: 0.6,
+      dividendYield: 2.8,
+      currentPrice: 185,
+    });
+
+    const result = scoreCompanyStability(stable);
+    expect(result.score).toBeGreaterThan(85);
+  });
+
+  test("micro cap high-beta no-dividend stock scores poorly", () => {
+    const risky = makeStability({
+      marketCap: 500e6,
+      beta: 2.5,
+      dividendYield: 0,
+      fiftyTwoWeekLow: 10,
+      fiftyTwoWeekHigh: 50,
+      currentPrice: 15,
+    });
+
+    const result = scoreCompanyStability(risky);
+    expect(result.score).toBeLessThan(30);
+  });
+
+  test("low beta scores higher than high beta", () => {
+    const lowBeta = scoreCompanyStability(makeStability({ beta: 0.7 }));
+    const highBeta = scoreCompanyStability(makeStability({ beta: 2.0 }));
+    expect(lowBeta.score).toBeGreaterThan(highBeta.score);
+  });
+
+  test("large cap scores higher than small cap", () => {
+    const largeCap = scoreCompanyStability(makeStability({ marketCap: 100e9 }));
+    const smallCap = scoreCompanyStability(makeStability({ marketCap: 1e9 }));
+    expect(largeCap.score).toBeGreaterThan(smallCap.score);
+  });
+
+  test("stock near 52wk high scores higher than near 52wk low", () => {
+    const nearHigh = scoreCompanyStability(
+      makeStability({ currentPrice: 195, fiftyTwoWeekLow: 140, fiftyTwoWeekHigh: 200 })
+    );
+    const nearLow = scoreCompanyStability(
+      makeStability({ currentPrice: 145, fiftyTwoWeekLow: 140, fiftyTwoWeekHigh: 200 })
+    );
+    expect(nearHigh.score).toBeGreaterThan(nearLow.score);
+  });
+
+  test("generates 4 stability signals", () => {
+    const result = scoreCompanyStability(makeStability());
+    expect(result.signals.length).toBe(4);
+    expect(result.signals.some((s) => s.name === "Market Cap")).toBe(true);
+    expect(result.signals.some((s) => s.name === "Beta")).toBe(true);
+    expect(result.signals.some((s) => s.name === "52wk Position")).toBe(true);
+    expect(result.signals.some((s) => s.name === "Dividend")).toBe(true);
+  });
+
+  test("stability integrates into put scoring when provided", () => {
+    const normalRegime = classifyMarketRegime(20);
+    const put = makePut();
+
+    const stableCompany = makeStability({ marketCap: 2000e9, beta: 0.5, dividendYield: 3.0 });
+    const riskyCompany = makeStability({ marketCap: 500e6, beta: 2.5, dividendYield: 0 });
+
+    const stableScored = scorePut(put, 50, normalRegime, stableCompany);
+    const riskyScored = scorePut(put, 50, normalRegime, riskyCompany);
+
+    expect(stableScored.score).toBeGreaterThan(riskyScored.score);
+    expect(stableScored.stabilityScore).toBeGreaterThan(riskyScored.stabilityScore);
   });
 });
 

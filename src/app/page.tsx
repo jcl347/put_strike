@@ -6,6 +6,7 @@ import MarketRegime from "@/components/MarketRegime";
 import StockQuoteCard from "@/components/StockQuoteCard";
 import PutTable from "@/components/PutTable";
 import ScreenerResults from "@/components/ScreenerResults";
+import Top10Puts from "@/components/Top10Puts";
 
 interface AnalysisData {
   symbol: string;
@@ -22,12 +23,18 @@ interface AnalysisData {
     fiftyTwoWeekLow: number;
     fiftyTwoWeekHigh: number;
     dividendYield: number;
+    beta: number;
+    trailingPE: number;
   };
   historicalVolatility: {
     currentHV: number;
     hvHigh: number;
     hvLow: number;
     hvRank: number;
+  };
+  stability: {
+    score: number;
+    signals: { name: string; value: string; sentiment: string; weight: number }[];
   };
   marketRegime: {
     vix: number;
@@ -54,6 +61,7 @@ interface AnalysisData {
     annualizedReturn: number;
     distanceOTM: number;
     bidAskSpread: number;
+    stabilityScore: number;
     recommendation: string;
     signals: { name: string; value: string; sentiment: string; weight: number }[];
   }>;
@@ -69,18 +77,33 @@ export default function Home() {
   const [screenLoading, setScreenLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"analyze" | "screen">("analyze");
+  const [dataSourceStatus, setDataSourceStatus] = useState<"connected" | "degraded" | "down" | null>(null);
 
   const analyzeSymbol = useCallback(async (symbol: string) => {
     setLoading(true);
     setError(null);
     setActiveTab("analyze");
+    setDataSourceStatus(null);
     try {
       const res = await fetch(`/api/analyze?symbol=${encodeURIComponent(symbol)}`);
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Analysis failed");
+      if (!res.ok) {
+        if (data.error?.includes("fetch failed") || data.error?.includes("429")) {
+          setDataSourceStatus("down");
+          throw new Error("Yahoo Finance is currently unavailable (rate limited or unreachable). Please try again in a few minutes.");
+        }
+        throw new Error(data.error || "Analysis failed");
+      }
       setAnalysis(data);
+      setDataSourceStatus("connected");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Analysis failed");
+      const msg = err instanceof Error ? err.message : "Analysis failed";
+      if (msg.includes("fetch failed") || msg.includes("Failed to fetch")) {
+        setDataSourceStatus("down");
+        setError("Yahoo Finance is currently unavailable. The live data source may be down or rate limiting requests. Please try again shortly.");
+      } else {
+        setError(msg);
+      }
       setAnalysis(null);
     } finally {
       setLoading(false);
@@ -91,13 +114,37 @@ export default function Home() {
     setScreenLoading(true);
     setError(null);
     setActiveTab("screen");
+    setDataSourceStatus(null);
     try {
       const res = await fetch("/api/screen");
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Screening failed");
+      if (!res.ok) {
+        if (data.error?.includes("fetch failed") || data.error?.includes("429")) {
+          setDataSourceStatus("down");
+          throw new Error("Yahoo Finance is currently unavailable. Please try again shortly.");
+        }
+        throw new Error(data.error || "Screening failed");
+      }
       setScreenerData(data);
+
+      // Check if some symbols failed
+      const failed = data.failedSymbols ?? [];
+      const total = (data.results?.length ?? 0) + failed.length;
+      if (failed.length > 0 && data.results?.length > 0) {
+        setDataSourceStatus("degraded");
+      } else if (failed.length > 0 && (!data.results || data.results.length === 0)) {
+        setDataSourceStatus("down");
+      } else {
+        setDataSourceStatus("connected");
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Screening failed");
+      const msg = err instanceof Error ? err.message : "Screening failed";
+      if (msg.includes("fetch failed") || msg.includes("Failed to fetch")) {
+        setDataSourceStatus("down");
+        setError("Yahoo Finance is currently unavailable. The live data source may be down or rate limiting requests. Please try again shortly.");
+      } else {
+        setError(msg);
+      }
       setScreenerData(null);
     } finally {
       setScreenLoading(false);
@@ -109,7 +156,7 @@ export default function Home() {
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
       {/* Header */}
-      <header className="mb-8">
+      <header className="mb-6">
         <div className="flex items-center gap-3 mb-2">
           <h1 className="text-3xl font-bold text-white">PutStrike</h1>
           <span className="text-xs bg-blue-600/20 text-blue-400 px-2 py-0.5 rounded-full border border-blue-500/30">
@@ -117,11 +164,49 @@ export default function Home() {
           </span>
         </div>
         <p className="text-gray-400 max-w-2xl">
-          Optimize cash-secured put sales using live market data and
-          research-validated scoring. Based on tastytrade, DataDrivenOptions, and
-          academic options research.
+          Optimize cash-secured put sales using live market data, company stability analysis,
+          and research-validated scoring (tastytrade, DataDrivenOptions, CBOE research).
         </p>
       </header>
+
+      {/* Data Source Status */}
+      {dataSourceStatus && (
+        <div
+          className={`mb-4 px-4 py-2 rounded-lg border flex items-center gap-2 text-sm ${
+            dataSourceStatus === "connected"
+              ? "bg-green-900/10 border-green-500/30 text-green-400"
+              : dataSourceStatus === "degraded"
+              ? "bg-yellow-900/10 border-yellow-500/30 text-yellow-400"
+              : "bg-red-900/10 border-red-500/30 text-red-400"
+          }`}
+        >
+          <span
+            className={`w-2 h-2 rounded-full ${
+              dataSourceStatus === "connected"
+                ? "bg-green-400"
+                : dataSourceStatus === "degraded"
+                ? "bg-yellow-400 animate-pulse"
+                : "bg-red-400 animate-pulse"
+            }`}
+          />
+          {dataSourceStatus === "connected" && (
+            <span>Yahoo Finance: Connected &mdash; Live data as of {new Date().toLocaleTimeString()}</span>
+          )}
+          {dataSourceStatus === "degraded" && (
+            <span>
+              Yahoo Finance: Partial data &mdash; Some symbols failed to load
+              {screenerData?.failedSymbols?.length > 0 && (
+                <span className="text-yellow-500 ml-1">
+                  (Failed: {screenerData.failedSymbols.map((f: {symbol: string}) => f.symbol).join(", ")})
+                </span>
+              )}
+            </span>
+          )}
+          {dataSourceStatus === "down" && (
+            <span>Yahoo Finance: Unavailable &mdash; Data source is down or rate limiting. Try again in a few minutes.</span>
+          )}
+        </div>
+      )}
 
       {/* Market Regime */}
       <div className="mb-6">
@@ -159,6 +244,7 @@ export default function Home() {
       {/* Error Display */}
       {error && (
         <div className="mb-6 p-4 bg-red-900/20 border border-red-500/30 rounded-lg text-red-400">
+          <div className="font-medium mb-1">Error</div>
           {error}
         </div>
       )}
@@ -178,6 +264,56 @@ export default function Home() {
             quote={analysis.quote}
             hv={analysis.historicalVolatility}
           />
+
+          {/* Company Stability Card */}
+          {analysis.stability && (
+            <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-medium text-gray-400">
+                  Company Stability Assessment
+                </h3>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-xl font-bold ${
+                      analysis.stability.score >= 70
+                        ? "text-green-400"
+                        : analysis.stability.score >= 50
+                        ? "text-yellow-400"
+                        : "text-red-400"
+                    }`}
+                  >
+                    {analysis.stability.score.toFixed(0)}/100
+                  </span>
+                  <span className="text-xs text-gray-500">
+                    {analysis.stability.score >= 70
+                      ? "Stable — Safe for CSP"
+                      : analysis.stability.score >= 50
+                      ? "Moderate — Proceed with caution"
+                      : "Risky — Consider alternatives"}
+                  </span>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {analysis.stability.signals.map((signal: { name: string; value: string; sentiment: string }) => (
+                  <div key={signal.name} className="text-sm">
+                    <div className="text-gray-500">{signal.name}</div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-white">{signal.value}</span>
+                      <span
+                        className={`w-2 h-2 rounded-full ${
+                          signal.sentiment === "bullish"
+                            ? "bg-green-400"
+                            : signal.sentiment === "bearish"
+                            ? "bg-red-400"
+                            : "bg-yellow-400"
+                        }`}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
             <PutTable
@@ -199,6 +335,7 @@ export default function Home() {
                   <li>DTE: 30-45 days optimal</li>
                   <li>HV Rank &gt; 30% (ideally &gt; 50%)</li>
                   <li>Strike 5-15% below current price</li>
+                  <li>Stability score &gt; 60</li>
                 </ul>
               </div>
               <div>
@@ -216,7 +353,7 @@ export default function Home() {
                   <li>Max 5% of portfolio per position</li>
                   <li>Only sell puts on stocks you&apos;d own</li>
                   <li>Reduce size when VIX &gt; 30</li>
-                  <li>Avoid pre-earnings plays</li>
+                  <li>Prefer beta &lt; 1.3 underlyings</li>
                 </ul>
               </div>
             </div>
@@ -226,11 +363,19 @@ export default function Home() {
 
       {/* Screener Results */}
       {activeTab === "screen" && (
-        <ScreenerResults
-          results={screenerData?.results ?? []}
-          loading={screenLoading}
-          onAnalyze={analyzeSymbol}
-        />
+        <div className="space-y-6">
+          {/* Top 10 Picks */}
+          {screenerData?.top10 && screenerData.top10.length > 0 && !screenLoading && (
+            <Top10Puts puts={screenerData.top10} />
+          )}
+
+          {/* Full Results */}
+          <ScreenerResults
+            results={screenerData?.results ?? []}
+            loading={screenLoading}
+            onAnalyze={analyzeSymbol}
+          />
+        </div>
       )}
 
       {/* Empty State */}
@@ -241,10 +386,10 @@ export default function Home() {
             Find Optimal Put Selling Opportunities
           </h2>
           <p className="text-gray-400 max-w-md mx-auto mb-6">
-            Search for a stock to analyze its options chain, or run the screener
-            to find the best put selling candidates across popular stocks.
+            Search for a stock to analyze its options chain with stability scoring,
+            or run the screener to find the Top 10 best put selling candidates.
           </p>
-          <div className="flex justify-center gap-3">
+          <div className="flex justify-center gap-3 mb-4">
             {["AAPL", "MSFT", "SPY", "NVDA", "AMZN"].map((sym) => (
               <button
                 key={sym}
@@ -255,6 +400,12 @@ export default function Home() {
               </button>
             ))}
           </div>
+          <button
+            onClick={runScreener}
+            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
+          >
+            Find Top 10 Put Sales
+          </button>
         </div>
       )}
 
@@ -266,8 +417,8 @@ export default function Home() {
           future results.
         </p>
         <p className="mt-1">
-          Methodology based on tastytrade research (45 DTE, 16-20 delta),
-          DataDrivenOptions, and Spintwig backtesting studies.
+          Scoring includes company stability (beta, market cap, dividends, 52wk position)
+          and option quality (premium, delta, DTE, liquidity, IV rank).
         </p>
       </footer>
     </div>

@@ -3,19 +3,27 @@
  *
  * Multi-factor scoring model based on research-validated criteria:
  *
+ * OPTION-LEVEL FACTORS (the original 6):
  * 1. Premium Yield (annualized return on capital) — higher is better
  * 2. Delta (probability of assignment) — 0.15-0.30 optimal range
- * 3. IV Rank / IV Percentile — higher = more expensive premiums (good for sellers)
- * 4. Days to Expiration — 30-45 DTE sweet spot per tastytrade research
- * 5. Liquidity (bid-ask spread, volume) — tighter spreads = better execution
- * 6. Distance OTM (margin of safety) — 5-15% below current price
- * 7. Market Regime — VIX-based regime detection
+ * 3. DTE Quality — 30-45 DTE sweet spot per tastytrade research
+ * 4. Liquidity (bid-ask spread, volume) — tighter spreads = better execution
+ * 5. Distance OTM (margin of safety) — 5-15% below current price
+ * 6. IV Rank / IV Percentile — higher = richer premiums for sellers
+ *
+ * COMPANY STABILITY FACTORS (new):
+ * 7. Market Cap — large caps are more stable, less gap risk
+ * 8. Beta — lower beta = less volatile = safer for put selling
+ * 9. Dividend Yield — dividend payers tend to be more stable
+ * 10. 52-Week Position — stocks near 52wk low have more downside risk
  *
  * References:
  * - tastytrade: 45 DTE, 16 delta, manage at 50% profit
  * - DataDrivenOptions: 20 delta short put optimal for theta
  * - Schwab/Barchart: IV Rank > 30 + IV Percentile > 50 for premium selling
  * - Spintwig SPY backtests: risk-adjusted returns matter more than absolute
+ * - CBOE: lower-beta underlyings have higher put-selling win rates
+ * - tastytrade: large-cap stocks reduce assignment gap risk
  */
 
 export interface PutCandidate {
@@ -36,12 +44,27 @@ export interface PutCandidate {
   vega: number;
 }
 
+/**
+ * Company-level stability metrics used to assess whether the underlying
+ * is suitable for put selling (would you want to own this stock if assigned?).
+ */
+export interface CompanyStability {
+  marketCap: number;
+  beta: number;
+  dividendYield: number;
+  fiftyTwoWeekLow: number;
+  fiftyTwoWeekHigh: number;
+  currentPrice: number;
+  trailingPE: number;
+}
+
 export interface ScoredPut extends PutCandidate {
   score: number;
   premiumYield: number;
   annualizedReturn: number;
   distanceOTM: number;
   bidAskSpread: number;
+  stabilityScore: number;
   signals: Signal[];
   recommendation: "STRONG_SELL" | "SELL" | "NEUTRAL" | "AVOID";
 }
@@ -97,26 +120,132 @@ export function classifyMarketRegime(vix: number): MarketRegime {
 }
 
 /**
+ * Score company stability for put selling suitability.
+ * Returns 0-100 score and contributing signals.
+ *
+ * Key insight: when you sell a put, you're agreeing to BUY the stock.
+ * So the underlying company must be one you'd want to own.
+ *
+ * Dimensions:
+ * - Market Cap (30%): Large-cap = less gap risk, more liquidity
+ * - Beta (30%): Low beta = less correlated drawdown risk
+ * - 52-Week Position (25%): Where is price relative to range?
+ * - Dividend Yield (15%): Dividends provide downside cushion
+ */
+export function scoreCompanyStability(
+  stability: CompanyStability
+): { score: number; signals: Signal[] } {
+  const signals: Signal[] = [];
+
+  // 1. Market Cap Score (30%)
+  // Research: Large caps have smaller overnight gaps, more predictable pricing
+  let capScore: number;
+  const capB = stability.marketCap / 1e9; // in billions
+  if (capB >= 200) capScore = 100; // mega cap
+  else if (capB >= 50) capScore = 90; // large cap
+  else if (capB >= 10) capScore = 70; // mid cap
+  else if (capB >= 2) capScore = 40; // small cap
+  else capScore = 15; // micro cap — dangerous for CSP
+
+  let capLabel: string;
+  if (capB >= 200) capLabel = "Mega Cap";
+  else if (capB >= 50) capLabel = "Large Cap";
+  else if (capB >= 10) capLabel = "Mid Cap";
+  else if (capB >= 2) capLabel = "Small Cap";
+  else capLabel = "Micro Cap";
+
+  signals.push({
+    name: "Market Cap",
+    value: `$${capB.toFixed(0)}B (${capLabel})`,
+    sentiment: capScore >= 70 ? "bullish" : capScore >= 40 ? "neutral" : "bearish",
+    weight: 0.3,
+  });
+
+  // 2. Beta Score (30%)
+  // Research: Beta < 1.0 means less volatile than market, ideal for put selling
+  // CBOE data shows lower-beta underlyings have higher put-selling win rates
+  let betaScore: number;
+  if (stability.beta <= 0.8) betaScore = 100; // defensive
+  else if (stability.beta <= 1.0) betaScore = 85; // market-like
+  else if (stability.beta <= 1.3) betaScore = 60; // moderate growth
+  else if (stability.beta <= 1.8) betaScore = 35; // aggressive
+  else betaScore = 15; // very volatile
+
+  signals.push({
+    name: "Beta",
+    value: `${stability.beta.toFixed(2)}`,
+    sentiment: stability.beta <= 1.0 ? "bullish" : stability.beta <= 1.3 ? "neutral" : "bearish",
+    weight: 0.3,
+  });
+
+  // 3. 52-Week Position Score (25%)
+  // Stocks near 52wk lows have more downside risk; near highs = momentum support
+  const range = stability.fiftyTwoWeekHigh - stability.fiftyTwoWeekLow;
+  const position =
+    range > 0
+      ? ((stability.currentPrice - stability.fiftyTwoWeekLow) / range) * 100
+      : 50;
+
+  let positionScore: number;
+  if (position >= 60 && position <= 90) positionScore = 100; // healthy uptrend
+  else if (position >= 40 && position <= 95) positionScore = 70; // mid-range
+  else if (position >= 20) positionScore = 40; // weak
+  else positionScore = 15; // near 52wk low — high assignment risk
+
+  signals.push({
+    name: "52wk Position",
+    value: `${position.toFixed(0)}% of range`,
+    sentiment: position >= 50 ? "bullish" : position >= 30 ? "neutral" : "bearish",
+    weight: 0.25,
+  });
+
+  // 4. Dividend Yield Score (15%)
+  // Dividend-paying companies tend to be more stable, provide downside cushion
+  let divScore: number;
+  if (stability.dividendYield >= 2.5) divScore = 100;
+  else if (stability.dividendYield >= 1.0) divScore = 80;
+  else if (stability.dividendYield >= 0.5) divScore = 60;
+  else if (stability.dividendYield > 0) divScore = 40;
+  else divScore = 30; // no dividend isn't terrible, just less cushion
+
+  signals.push({
+    name: "Dividend",
+    value:
+      stability.dividendYield > 0
+        ? `${stability.dividendYield.toFixed(2)}%`
+        : "None",
+    sentiment: stability.dividendYield >= 1.0 ? "bullish" : stability.dividendYield > 0 ? "neutral" : "bearish",
+    weight: 0.15,
+  });
+
+  const score =
+    capScore * 0.3 + betaScore * 0.3 + positionScore * 0.25 + divScore * 0.15;
+
+  return { score: Math.round(score * 10) / 10, signals };
+}
+
+/**
  * Score a put option candidate using research-validated multi-factor model.
  *
- * Weights derived from backtesting literature:
- * - Premium yield: 25% (primary income driver)
- * - Delta quality: 20% (probability of profit is key per tastytrade)
- * - DTE quality: 15% (45 DTE optimal per tastytrade research)
- * - Liquidity: 15% (execution quality matters for real returns)
- * - Distance OTM: 15% (margin of safety)
- * - IV environment: 10% (sell when IV is elevated)
+ * Revised weights (now include stability):
+ * - Premium yield: 20% (income driver)
+ * - Delta quality: 15% (probability of profit)
+ * - DTE quality: 12% (theta decay timing)
+ * - Liquidity: 12% (execution quality)
+ * - Distance OTM: 12% (margin of safety)
+ * - IV environment: 9% (premium richness)
+ * - Company stability: 20% (would you own this stock?)
  */
 export function scorePut(
   candidate: PutCandidate,
-  ivRank: number | null, // 0-100, null if unavailable
-  marketRegime: MarketRegime
+  ivRank: number | null,
+  marketRegime: MarketRegime,
+  stability?: CompanyStability
 ): ScoredPut {
   const signals: Signal[] = [];
 
   // 1. Premium Yield (annualized return on collateral)
   const midPrice = (candidate.bid + candidate.ask) / 2;
-  const collateral = candidate.strikePrice * 100; // cash-secured
   const premiumYield = (midPrice / candidate.strikePrice) * 100;
   const annualizedReturn = premiumYield * (365 / candidate.dte);
 
@@ -131,13 +260,13 @@ export function scorePut(
     name: "Annualized Return",
     value: `${annualizedReturn.toFixed(1)}%`,
     sentiment: annualizedReturn >= 10 ? "bullish" : annualizedReturn >= 5 ? "neutral" : "bearish",
-    weight: 0.25,
+    weight: 0.2,
   });
 
   // 2. Delta Quality (0.15-0.30 is sweet spot)
   const absDelta = Math.abs(candidate.delta);
   let deltaScore: number;
-  if (absDelta >= 0.15 && absDelta <= 0.30) deltaScore = 100; // sweet spot
+  if (absDelta >= 0.15 && absDelta <= 0.30) deltaScore = 100;
   else if (absDelta >= 0.10 && absDelta <= 0.35) deltaScore = 75;
   else if (absDelta >= 0.05 && absDelta <= 0.45) deltaScore = 50;
   else deltaScore = 20;
@@ -147,7 +276,7 @@ export function scorePut(
     name: "Delta / P(OTM)",
     value: `${absDelta.toFixed(2)} / ${probOTM}%`,
     sentiment: absDelta >= 0.15 && absDelta <= 0.30 ? "bullish" : "neutral",
-    weight: 0.2,
+    weight: 0.15,
   });
 
   // 3. DTE Quality (30-45 optimal)
@@ -161,10 +290,10 @@ export function scorePut(
     name: "Days to Expiration",
     value: `${candidate.dte} days`,
     sentiment: candidate.dte >= 30 && candidate.dte <= 50 ? "bullish" : "neutral",
-    weight: 0.15,
+    weight: 0.12,
   });
 
-  // 4. Liquidity (bid-ask spread as % of mid, volume, OI)
+  // 4. Liquidity (bid-ask spread as % of mid, OI)
   const bidAskSpread = candidate.ask - candidate.bid;
   const spreadPct = midPrice > 0 ? (bidAskSpread / midPrice) * 100 : 100;
 
@@ -179,7 +308,7 @@ export function scorePut(
     name: "Liquidity",
     value: `Spread: ${spreadPct.toFixed(1)}%, OI: ${candidate.openInterest}`,
     sentiment: liquidityScore >= 75 ? "bullish" : liquidityScore >= 50 ? "neutral" : "bearish",
-    weight: 0.15,
+    weight: 0.12,
   });
 
   // 5. Distance OTM (5-15% below current price ideal)
@@ -196,11 +325,11 @@ export function scorePut(
     name: "Distance OTM",
     value: `${distanceOTM.toFixed(1)}%`,
     sentiment: distanceOTM >= 5 && distanceOTM <= 15 ? "bullish" : "neutral",
-    weight: 0.15,
+    weight: 0.12,
   });
 
   // 6. IV Rank (if available)
-  let ivScore = 50; // neutral default
+  let ivScore = 50;
   if (ivRank !== null) {
     if (ivRank >= 50) ivScore = 100;
     else if (ivRank >= 30) ivScore = 70;
@@ -210,25 +339,41 @@ export function scorePut(
       name: "IV Rank",
       value: `${ivRank.toFixed(0)}%`,
       sentiment: ivRank >= 50 ? "bullish" : ivRank >= 30 ? "neutral" : "bearish",
-      weight: 0.1,
+      weight: 0.09,
     });
   }
 
+  // 7. Company Stability (if provided)
+  let stabilityScore = 60; // neutral default when not provided
+  if (stability) {
+    const stabilityResult = scoreCompanyStability(stability);
+    stabilityScore = stabilityResult.score;
+    signals.push(...stabilityResult.signals);
+  }
+
   // Weighted composite score
-  const score =
-    yieldScore * 0.25 +
-    deltaScore * 0.2 +
-    dteScore * 0.15 +
-    liquidityScore * 0.15 +
-    distanceScore * 0.15 +
-    ivScore * 0.1;
+  const score = stability
+    ? yieldScore * 0.20 +
+      deltaScore * 0.15 +
+      dteScore * 0.12 +
+      liquidityScore * 0.12 +
+      distanceScore * 0.12 +
+      ivScore * 0.09 +
+      stabilityScore * 0.20
+    : // Original weights when no stability data available
+      yieldScore * 0.25 +
+      deltaScore * 0.20 +
+      dteScore * 0.15 +
+      liquidityScore * 0.15 +
+      distanceScore * 0.15 +
+      ivScore * 0.10;
 
   // Apply market regime modifier
   let adjustedScore = score;
   if (marketRegime.regime === "CRISIS") adjustedScore *= 0.6;
   else if (marketRegime.regime === "HIGH_VOL") adjustedScore *= 0.9;
   else if (marketRegime.regime === "NORMAL") adjustedScore *= 1.0;
-  else adjustedScore *= 0.95; // low vol = slightly less attractive premiums
+  else adjustedScore *= 0.95;
 
   // Recommendation
   let recommendation: ScoredPut["recommendation"];
@@ -244,6 +389,7 @@ export function scorePut(
     annualizedReturn,
     distanceOTM,
     bidAskSpread,
+    stabilityScore,
     signals,
     recommendation,
   };
@@ -257,11 +403,12 @@ export function rankPuts(
   candidates: PutCandidate[],
   ivRank: number | null,
   marketRegime: MarketRegime,
-  topN: number = 20
+  topN: number = 20,
+  stability?: CompanyStability
 ): ScoredPut[] {
   return candidates
-    .map((c) => scorePut(c, ivRank, marketRegime))
-    .filter((s) => s.bid > 0 && s.dte >= 7) // filter out worthless / too-close
+    .map((c) => scorePut(c, ivRank, marketRegime, stability))
+    .filter((s) => s.bid > 0 && s.dte >= 7)
     .sort((a, b) => b.score - a.score)
     .slice(0, topN);
 }

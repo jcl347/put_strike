@@ -13,6 +13,8 @@ interface Quote {
   fiftyTwoWeekLow: number;
   fiftyTwoWeekHigh: number;
   dividendYield: number;
+  beta: number;
+  trailingPE: number;
 }
 
 interface VolatilityInfo {
@@ -66,7 +68,7 @@ export default function StockQuoteCard({ quote, hv }: StockQuoteCardProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 text-sm">
         <div>
           <span className="text-gray-500">Market Cap</span>
           <p className="text-white font-medium">{formatNumber(quote.marketCap)}</p>
@@ -90,6 +92,23 @@ export default function StockQuoteCard({ quote, hv }: StockQuoteCardProps) {
           <span className="text-gray-500">Div Yield</span>
           <p className="text-white font-medium">
             {quote.dividendYield > 0 ? `${quote.dividendYield.toFixed(2)}%` : "N/A"}
+          </p>
+        </div>
+        <div>
+          <span className="text-gray-500">Beta</span>
+          <p className={`font-medium ${
+            quote.beta <= 1.0 ? "text-green-400" : quote.beta <= 1.3 ? "text-yellow-400" : "text-red-400"
+          }`}>
+            {quote.beta.toFixed(2)}
+            <span className="text-gray-500 text-xs ml-1">
+              {quote.beta <= 0.8 ? "(Defensive)" : quote.beta <= 1.0 ? "(Stable)" : quote.beta <= 1.3 ? "(Moderate)" : "(Volatile)"}
+            </span>
+          </p>
+        </div>
+        <div>
+          <span className="text-gray-500">P/E Ratio</span>
+          <p className="text-white font-medium">
+            {quote.trailingPE > 0 ? quote.trailingPE.toFixed(1) : "N/A"}
           </p>
         </div>
       </div>

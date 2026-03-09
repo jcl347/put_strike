@@ -8,16 +8,14 @@ import {
 import { putGreeks } from "@/lib/black-scholes";
 import {
   type PutCandidate,
+  type CompanyStability,
   rankPuts,
   classifyMarketRegime,
+  scoreCompanyStability,
 } from "@/lib/scoring";
 
 export const dynamic = "force-dynamic";
 
-/**
- * Analyze a specific stock for put selling opportunities.
- * Returns detailed analysis with all expirations and scored puts.
- */
 export async function GET(request: NextRequest) {
   const symbol = request.nextUrl.searchParams.get("symbol");
   if (!symbol) {
@@ -39,7 +37,20 @@ export async function GET(request: NextRequest) {
 
     const marketRegime = classifyMarketRegime(vix);
 
-    // Fetch options chain (default expiration first to get all dates)
+    // Build company stability profile
+    const companyStability: CompanyStability = {
+      marketCap: quote.marketCap,
+      beta: quote.beta,
+      dividendYield: quote.dividendYield,
+      fiftyTwoWeekLow: quote.fiftyTwoWeekLow,
+      fiftyTwoWeekHigh: quote.fiftyTwoWeekHigh,
+      currentPrice: quote.price,
+      trailingPE: quote.trailingPE,
+    };
+
+    const stabilityResult = scoreCompanyStability(companyStability);
+
+    // Fetch options chain
     const initialChain = await getOptionsChain(upperSymbol);
 
     // Fetch chains for expirations in the 14-75 DTE window
@@ -51,7 +62,6 @@ export async function GET(request: NextRequest) {
       return dte >= 14 && dte <= 75;
     });
 
-    // Fetch up to 4 expirations to avoid rate limiting
     const expirationsToFetch = relevantExpirations.slice(0, 4);
 
     const chainResults = await Promise.allSettled(
@@ -61,7 +71,6 @@ export async function GET(request: NextRequest) {
     const allPuts: PutCandidate[] = [];
     const riskFreeRate = 0.045;
 
-    // Also include puts from initial chain
     const allChains = [initialChain];
     for (const result of chainResults) {
       if (result.status === "fulfilled") {
@@ -69,7 +78,6 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // De-duplicate by strike+expiration
     const seen = new Set<string>();
 
     for (const chain of allChains) {
@@ -113,7 +121,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const scored = rankPuts(allPuts, hv.hvRank, marketRegime, 30);
+    const scored = rankPuts(allPuts, hv.hvRank, marketRegime, 30, companyStability);
 
     // Group by expiration for the UI
     const byExpiration: Record<string, typeof scored> = {};
@@ -127,6 +135,7 @@ export async function GET(request: NextRequest) {
       quote,
       historicalVolatility: hv,
       marketRegime,
+      stability: stabilityResult,
       expirationDates: initialChain.expirationDates,
       scoredPuts: scored,
       putsByExpiration: byExpiration,

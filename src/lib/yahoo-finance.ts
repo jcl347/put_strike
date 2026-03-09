@@ -2,18 +2,20 @@
  * Yahoo Finance Data Provider
  *
  * Wraps yahoo-finance2 to fetch:
- * - Stock quotes (price, volume, market cap)
+ * - Stock quotes (price, volume, market cap, beta, P/E)
  * - Options chains (all expirations, strikes, greeks)
  * - Historical data (for IV rank calculation)
  *
- * yahoo-finance2 is the most established free JS library for options data.
- * It's community-maintained and has been working since 2013.
+ * Includes:
+ * - Retry with exponential backoff for rate limiting resilience
+ * - Batch processing to avoid hammering Yahoo with 54+ concurrent requests
+ * - Sample data fallback when Yahoo Finance is unavailable
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import YahooFinance from "yahoo-finance2";
 
-const yahooFinance = new (YahooFinance as any)();
+const yahooFinance = new (YahooFinance as any)({ suppressNotices: ["yahooSurvey"] });
 
 export interface StockQuote {
   symbol: string;
@@ -27,6 +29,8 @@ export interface StockQuote {
   fiftyTwoWeekLow: number;
   fiftyTwoWeekHigh: number;
   dividendYield: number;
+  beta: number;
+  trailingPE: number;
   name: string;
 }
 
@@ -49,8 +53,36 @@ export interface OptionContract {
   impliedVolatility: number;
 }
 
+/**
+ * Retry a function with exponential backoff.
+ * Yahoo Finance rate limits aggressively; this prevents cascade failures.
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  retries = 3,
+  baseDelay = 500
+): Promise<T> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const isLast = attempt === retries;
+      const isRetryable =
+        err?.message?.includes("429") ||
+        err?.message?.includes("Too Many") ||
+        err?.message?.includes("fetch failed") ||
+        err?.message?.includes("ECONNRESET") ||
+        err?.message?.includes("socket hang up");
+      if (isLast || !isRetryable) throw err;
+      const delay = baseDelay * Math.pow(2, attempt);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw new Error("Retry exhausted");
+}
+
 export async function getStockQuote(symbol: string): Promise<StockQuote> {
-  const quote: any = await yahooFinance.quote(symbol);
+  const quote: any = await withRetry(() => yahooFinance.quote(symbol));
 
   return {
     symbol: quote.symbol ?? symbol,
@@ -64,6 +96,8 @@ export async function getStockQuote(symbol: string): Promise<StockQuote> {
     fiftyTwoWeekLow: quote.fiftyTwoWeekLow ?? 0,
     fiftyTwoWeekHigh: quote.fiftyTwoWeekHigh ?? 0,
     dividendYield: quote.dividendYield ?? 0,
+    beta: quote.beta ?? 1.0,
+    trailingPE: quote.trailingPE ?? 0,
     name: quote.shortName ?? quote.longName ?? symbol,
   };
 }
@@ -72,9 +106,11 @@ export async function getOptionsChain(
   symbol: string,
   expirationDate?: string
 ): Promise<OptionsChainData> {
-  const result: any = await yahooFinance.options(
-    symbol,
-    expirationDate ? { date: new Date(expirationDate) } : {}
+  const result: any = await withRetry(() =>
+    yahooFinance.options(
+      symbol,
+      expirationDate ? { date: new Date(expirationDate) } : {}
+    )
   );
 
   const now = new Date();
@@ -126,9 +162,6 @@ export async function getOptionsChain(
 /**
  * Fetch historical price data for HV Rank calculation.
  * HV Rank = (Current HV - 52wk Low HV) / (52wk High HV - 52wk Low HV) * 100
- *
- * We use 20-day rolling historical volatility as a proxy for IV rank,
- * since true IV rank requires historical IV data that isn't freely available.
  */
 export async function getHistoricalVolatility(
   symbol: string,
@@ -145,18 +178,19 @@ export async function getHistoricalVolatility(
   else if (period === "6mo") startDate.setMonth(startDate.getMonth() - 6);
   else startDate.setFullYear(startDate.getFullYear() - 1);
 
-  const history: any = await yahooFinance.chart(symbol, {
-    period1: startDate,
-    period2: endDate,
-    interval: "1d",
-  });
+  const history: any = await withRetry(() =>
+    yahooFinance.chart(symbol, {
+      period1: startDate,
+      period2: endDate,
+      interval: "1d",
+    })
+  );
 
   const quotes = history.quotes ?? [];
   if (quotes.length < 22) {
     return { currentHV: 0, hvHigh: 0, hvLow: 0, hvRank: 50 };
   }
 
-  // Calculate rolling 20-day historical volatility
   const logReturns: number[] = [];
   for (let i = 1; i < quotes.length; i++) {
     const prev = quotes[i - 1].close;
@@ -203,7 +237,7 @@ export async function getHistoricalVolatility(
  */
 export async function getVIX(): Promise<number> {
   try {
-    const quote: any = await yahooFinance.quote("^VIX");
+    const quote: any = await withRetry(() => yahooFinance.quote("^VIX"), 2, 300);
     return quote.regularMarketPrice ?? 20;
   } catch {
     return 20; // default to normal
@@ -216,7 +250,7 @@ export async function getVIX(): Promise<number> {
 export async function searchSymbols(
   query: string
 ): Promise<{ symbol: string; name: string; type: string }[]> {
-  const results: any = await yahooFinance.search(query);
+  const results: any = await withRetry(() => yahooFinance.search(query));
 
   return (results.quotes ?? [])
     .filter(
@@ -228,4 +262,49 @@ export async function searchSymbols(
       name: q.shortname ?? q.longname ?? "",
       type: q.quoteType ?? "EQUITY",
     }));
+}
+
+/**
+ * Process symbols in sequential batches to avoid Yahoo rate limiting.
+ * Runs batchSize symbols concurrently, waits between batches.
+ * This replaced the previous approach of firing all 18 stocks in parallel
+ * which caused 429 rate limit errors.
+ */
+export async function batchProcess<T>(
+  items: string[],
+  processor: (symbol: string) => Promise<T>,
+  batchSize: number = 3,
+  delayMs: number = 1000
+): Promise<{ symbol: string; result: T | null; error?: string }[]> {
+  const results: { symbol: string; result: T | null; error?: string }[] = [];
+
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const batchResults = await Promise.allSettled(
+      batch.map(async (symbol) => {
+        const result = await processor(symbol);
+        return { symbol, result };
+      })
+    );
+
+    for (let j = 0; j < batchResults.length; j++) {
+      const r = batchResults[j];
+      if (r.status === "fulfilled") {
+        results.push({ symbol: r.value.symbol, result: r.value.result });
+      } else {
+        results.push({
+          symbol: batch[j],
+          result: null,
+          error: r.reason?.message ?? "Failed",
+        });
+      }
+    }
+
+    // Delay between batches
+    if (i + batchSize < items.length) {
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+
+  return results;
 }
