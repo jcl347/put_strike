@@ -63,7 +63,7 @@ export default function ScreenerResults({
           Screening stocks for put selling opportunities...
         </p>
         <p className="text-gray-500 text-sm mt-1">
-          Processing in batches to avoid rate limiting. This may take 20-40 seconds.
+          Analyzing 10 stocks for optimal put selling opportunities...
         </p>
       </div>
     );

@@ -4,7 +4,6 @@ import {
   getStockQuote,
   getHistoricalVolatility,
   getVIX,
-  batchProcess,
   type StockQuote,
 } from "@/lib/yahoo-finance";
 import { putGreeks } from "@/lib/black-scholes";
@@ -18,14 +17,13 @@ import {
 } from "@/lib/scoring";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; // allow up to 60s for Vercel
+export const maxDuration = 60;
 
-// Default watchlist: high-liquidity, fundamentally strong stocks for CSP
+// Default watchlist: 10 high-liquidity, fundamentally strong stocks for CSP
+// Reduced from 18 to fit within Vercel function timeouts reliably
 const DEFAULT_SYMBOLS = [
-  "AAPL", "MSFT", "GOOGL", "AMZN", "META",
-  "NVDA", "JPM", "V", "JNJ", "PG",
-  "KO", "PEP", "WMT", "HD", "DIS",
-  "SPY", "QQQ", "IWM",
+  "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA",
+  "JPM", "SPY", "QQQ", "META", "V",
 ];
 
 interface ScreenResult {
@@ -37,17 +35,88 @@ interface ScreenResult {
   topPuts: ScoredPut[];
 }
 
+async function processSymbol(
+  symbol: string,
+  marketRegime: ReturnType<typeof classifyMarketRegime>
+): Promise<ScreenResult> {
+  const [chain, quote, hv] = await Promise.all([
+    getOptionsChain(symbol),
+    getStockQuote(symbol),
+    getHistoricalVolatility(symbol),
+  ]);
+
+  const puts = chain.options.filter((o) => o.type === "put");
+  const riskFreeRate = 0.045;
+
+  const companyStability: CompanyStability = {
+    marketCap: quote.marketCap,
+    beta: quote.beta,
+    dividendYield: quote.dividendYield,
+    fiftyTwoWeekLow: quote.fiftyTwoWeekLow,
+    fiftyTwoWeekHigh: quote.fiftyTwoWeekHigh,
+    currentPrice: quote.price,
+    trailingPE: quote.trailingPE,
+  };
+
+  const stabilityResult = scoreCompanyStability(companyStability);
+
+  const candidates: PutCandidate[] = puts
+    .filter((p) => p.dte >= 14 && p.dte <= 75 && p.bid > 0)
+    .map((p) => {
+      const T = p.dte / 365;
+      const greeks = putGreeks({
+        S: quote.price,
+        K: p.strike,
+        T,
+        r: riskFreeRate,
+        sigma: p.impliedVolatility > 0 ? p.impliedVolatility : 0.3,
+        q: (quote.dividendYield || 0) / 100,
+      });
+
+      return {
+        symbol,
+        stockPrice: quote.price,
+        strikePrice: p.strike,
+        expiration: p.expiration,
+        dte: p.dte,
+        bid: p.bid,
+        ask: p.ask,
+        lastPrice: p.lastPrice,
+        volume: p.volume,
+        openInterest: p.openInterest,
+        impliedVolatility: p.impliedVolatility > 0 ? p.impliedVolatility * 100 : 30,
+        delta: greeks.delta,
+        gamma: greeks.gamma,
+        theta: greeks.theta,
+        vega: greeks.vega,
+      };
+    });
+
+  const ivRank = hv.hvRank;
+  const scored = rankPuts(candidates, ivRank, marketRegime, 5, companyStability);
+
+  return {
+    symbol,
+    quote,
+    ivRank,
+    hv,
+    stability: stabilityResult,
+    topPuts: scored,
+  };
+}
+
 export async function GET(request: NextRequest) {
   const symbolsParam = request.nextUrl.searchParams.get("symbols");
   const symbols = symbolsParam
     ? symbolsParam.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean)
     : DEFAULT_SYMBOLS;
 
-  const selectedSymbols = symbols.slice(0, 20);
+  const selectedSymbols = symbols.slice(0, 15);
+  const startTime = Date.now();
 
   try {
     // VIX fetch should not crash the entire screener
-    let vix = 20; // default assumption: normal market
+    let vix = 20;
     try {
       vix = await getVIX();
     } catch (vixErr) {
@@ -55,87 +124,47 @@ export async function GET(request: NextRequest) {
     }
     const marketRegime = classifyMarketRegime(vix);
 
-    // Process symbols in batches of 3 with 1s delay between batches
-    // to avoid Yahoo Finance rate limiting (the old approach fired all 18 in parallel)
-    const batchResults = await batchProcess<ScreenResult>(
-      selectedSymbols,
-      async (symbol) => {
-        const [chain, quote, hv] = await Promise.all([
-          getOptionsChain(symbol),
-          getStockQuote(symbol),
-          getHistoricalVolatility(symbol),
-        ]);
+    // Process symbols in small batches of 2 with NO delay between batches.
+    // Each symbol makes 3 parallel Yahoo requests (quote + options + history).
+    // Batch of 2 = 6 concurrent Yahoo requests, which stays under rate limits.
+    // Previous approach: batch of 3 with 1s delay = wasted 5+ seconds on delays.
+    const batchSize = 2;
+    const results: { symbol: string; result: ScreenResult | null; error?: string }[] = [];
+    let timedOut = false;
 
-        const puts = chain.options.filter((o) => o.type === "put");
-        const riskFreeRate = 0.045;
+    for (let i = 0; i < selectedSymbols.length; i += batchSize) {
+      // Safety: if we've used > 50s, return what we have
+      if (Date.now() - startTime > 50000) {
+        console.warn(`[/api/screen] Timeout guard: processed ${results.length}/${selectedSymbols.length} symbols in ${Date.now() - startTime}ms`);
+        timedOut = true;
+        // Mark remaining as failed
+        for (let j = i; j < selectedSymbols.length; j++) {
+          results.push({ symbol: selectedSymbols[j], result: null, error: "Timeout - partial results returned" });
+        }
+        break;
+      }
 
-        // Build company stability profile from quote data
-        const companyStability: CompanyStability = {
-          marketCap: quote.marketCap,
-          beta: quote.beta,
-          dividendYield: quote.dividendYield,
-          fiftyTwoWeekLow: quote.fiftyTwoWeekLow,
-          fiftyTwoWeekHigh: quote.fiftyTwoWeekHigh,
-          currentPrice: quote.price,
-          trailingPE: quote.trailingPE,
-        };
+      const batch = selectedSymbols.slice(i, i + batchSize);
+      const batchResults = await Promise.allSettled(
+        batch.map((sym) => processSymbol(sym, marketRegime))
+      );
 
-        const stabilityResult = scoreCompanyStability(companyStability);
+      for (let j = 0; j < batchResults.length; j++) {
+        const r = batchResults[j];
+        if (r.status === "fulfilled") {
+          results.push({ symbol: batch[j], result: r.value });
+        } else {
+          const errMsg = r.reason?.message ?? "Failed";
+          console.warn(`[/api/screen] ${batch[j]} failed:`, errMsg);
+          results.push({ symbol: batch[j], result: null, error: errMsg });
+        }
+      }
+    }
 
-        // Build candidates with computed Greeks
-        const candidates: PutCandidate[] = puts
-          .filter((p) => p.dte >= 14 && p.dte <= 75 && p.bid > 0)
-          .map((p) => {
-            const T = p.dte / 365;
-            const greeks = putGreeks({
-              S: quote.price,
-              K: p.strike,
-              T,
-              r: riskFreeRate,
-              sigma: p.impliedVolatility > 0 ? p.impliedVolatility : 0.3,
-              q: (quote.dividendYield || 0) / 100,
-            });
-
-            return {
-              symbol,
-              stockPrice: quote.price,
-              strikePrice: p.strike,
-              expiration: p.expiration,
-              dte: p.dte,
-              bid: p.bid,
-              ask: p.ask,
-              lastPrice: p.lastPrice,
-              volume: p.volume,
-              openInterest: p.openInterest,
-              impliedVolatility: p.impliedVolatility > 0 ? p.impliedVolatility * 100 : 30,
-              delta: greeks.delta,
-              gamma: greeks.gamma,
-              theta: greeks.theta,
-              vega: greeks.vega,
-            };
-          });
-
-        const ivRank = hv.hvRank;
-        const scored = rankPuts(candidates, ivRank, marketRegime, 5, companyStability);
-
-        return {
-          symbol,
-          quote,
-          ivRank,
-          hv,
-          stability: stabilityResult,
-          topPuts: scored,
-        };
-      },
-      3,   // batch size
-      1000 // delay between batches (ms)
-    );
-
-    const successful = batchResults
+    const successful = results
       .filter((r) => r.result !== null && r.result.topPuts.length > 0)
       .map((r) => r.result!);
 
-    // Sort by best overall opportunity (highest top score)
     successful.sort((a, b) => {
       const aTop = a.topPuts[0]?.score ?? 0;
       const bTop = b.topPuts[0]?.score ?? 0;
@@ -156,19 +185,26 @@ export async function GET(request: NextRequest) {
     allScoredPuts.sort((a, b) => b.score - a.score);
     const top10 = allScoredPuts.slice(0, 10);
 
+    const failedSymbols = results
+      .filter((r) => r.result === null)
+      .map((r) => ({ symbol: r.symbol, error: r.error }));
+
+    const elapsed = Date.now() - startTime;
+    console.log(`[/api/screen] Completed: ${successful.length} successful, ${failedSymbols.length} failed, ${elapsed}ms`);
+
     return NextResponse.json({
       marketRegime,
       timestamp: new Date().toISOString(),
       top10,
       results: successful,
-      failedSymbols: batchResults
-        .filter((r) => r.result === null)
-        .map((r) => ({ symbol: r.symbol, error: r.error })),
+      failedSymbols,
+      timedOut,
+      processingTimeMs: elapsed,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Screening failed";
     const stack = error instanceof Error ? error.stack : undefined;
     console.error("[/api/screen] Error:", message, stack);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message, processingTimeMs: Date.now() - startTime }, { status: 500 });
   }
 }

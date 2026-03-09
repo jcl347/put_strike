@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { searchSymbols } from "@/lib/yahoo-finance";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 10;
 
 export async function GET(request: NextRequest) {
   const query = request.nextUrl.searchParams.get("q");
