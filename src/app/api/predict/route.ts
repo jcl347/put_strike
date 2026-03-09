@@ -140,7 +140,7 @@ export async function GET(request: NextRequest) {
 
         const colabRes = await fetch(`${colabUrl}/predict`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
           body: JSON.stringify(colabPayload),
           signal: AbortSignal.timeout(15000), // 15s timeout (feature computation takes time)
         });

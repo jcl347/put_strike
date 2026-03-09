@@ -28,6 +28,7 @@ export default function ColabConnect({ onUrlChange }: Props) {
     try {
       const cleanUrl = testUrl.replace(/\/+$/, "");
       const res = await fetch(`${cleanUrl}/health`, {
+        headers: { "ngrok-skip-browser-warning": "true" },
         signal: AbortSignal.timeout(5000),
       });
       if (res.ok) {
