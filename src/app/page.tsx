@@ -10,9 +10,10 @@ import Top10Puts from "@/components/Top10Puts";
 import ErrorToast from "@/components/ErrorToast";
 import PutDecisionAssistant from "@/components/PutDecisionAssistant";
 import PricePrediction from "@/components/PricePrediction";
-import ColabConnect from "@/components/ColabConnect";
+import HFModelStatus from "@/components/HFModelStatus";
 import DTESelector, { DEFAULT_DTE, type DTERange } from "@/components/DTESelector";
 import StockForecast from "@/components/StockForecast";
+import TimeSeriesChart from "@/components/TimeSeriesChart";
 
 interface AnalysisData {
   symbol: string;
@@ -120,7 +121,6 @@ export default function Home() {
   const [screenerData, setScreenerData] = useState<ScreenerData | null>(null);
   const [prediction, setPrediction] = useState<PredictionData | null>(null);
   const [predictionLoading, setPredictionLoading] = useState(false);
-  const [colabUrl, setColabUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [screenLoading, setScreenLoading] = useState(false);
   const [screenProgress, setScreenProgress] = useState<ScreenProgress | null>(null);
@@ -132,6 +132,11 @@ export default function Home() {
   const [dteRange, setDteRange] = useState<DTERange>(DEFAULT_DTE);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [screenerForecasts, setScreenerForecasts] = useState<Record<string, any>>({});
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [singleForecast, setSingleForecast] = useState<any>(null);
+  const [singleForecastLoading, setSingleForecastLoading] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [singleForecastData, setSingleForecastData] = useState<any>(null);
 
   // Safely parse API response - handles HTML error pages from Vercel
   const safeParseResponse = async (res: Response): Promise<{ data: Record<string, unknown> | null; rawText: string }> => {
@@ -168,8 +173,9 @@ export default function Home() {
       }
       setAnalysis(data as unknown as AnalysisData);
       setDataSourceStatus("connected");
-      // Trigger prediction in background (with Colab URL if connected)
-      fetchPrediction(symbol, colabUrl);
+      // Trigger prediction + iTransformer forecast in background
+      fetchPrediction(symbol);
+      fetchSingleForecast(symbol, (data as any).quote?.price ?? 0);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Analysis failed";
       if (msg.includes("fetch failed") || msg.includes("Failed to fetch")) {
@@ -183,16 +189,13 @@ export default function Home() {
       setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [colabUrl]);
+  }, []);
 
-  // Fetch price prediction for a symbol (with optional Colab GPU inference)
-  const fetchPrediction = useCallback(async (symbol: string, colabEndpoint?: string | null) => {
+  // Fetch price prediction for a symbol
+  const fetchPrediction = useCallback(async (symbol: string) => {
     setPredictionLoading(true);
     try {
-      let url = `/api/predict?symbol=${encodeURIComponent(symbol)}`;
-      if (colabEndpoint) {
-        url += `&colab_url=${encodeURIComponent(colabEndpoint)}`;
-      }
+      const url = `/api/predict?symbol=${encodeURIComponent(symbol)}`;
       const res = await fetch(url);
       const { data } = await safeParseResponse(res);
       if (res.ok && data) {
@@ -202,6 +205,32 @@ export default function Home() {
       // Non-critical — prediction is supplementary
     } finally {
       setPredictionLoading(false);
+    }
+  }, []);
+
+  // Fetch iTransformer forecast for a single stock
+  const fetchSingleForecast = useCallback(async (symbol: string, price: number) => {
+    if (!price) return;
+    setSingleForecastLoading(true);
+    setSingleForecast(null);
+    setSingleForecastData(null);
+    try {
+      // Fetch real features from server
+      const res = await fetch(`/api/forecast?symbol=${encodeURIComponent(symbol)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setSingleForecastData(data);
+
+      // Run client-side ONNX inference with real features
+      const { runHFInference } = await import("@/lib/hf-model");
+      const prediction = await runHFInference(symbol, price, data.featureMatrix);
+      if (prediction) {
+        setSingleForecast(prediction);
+      }
+    } catch {
+      // Non-critical
+    } finally {
+      setSingleForecastLoading(false);
     }
   }, []);
 
@@ -305,13 +334,13 @@ export default function Home() {
         return bTop - aTop;
       });
 
-      // Build global top 10 picks across all stocks
-      // Include checklist context for inline flag display
+      // Build global top 10 picks — one best put per stock for maximum diversity
+      // This ensures a wide range of companies/sectors and DTEs to compare
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const allScoredPuts: any[] = [];
+      const bestPerStock = new Map<string, any>();
       for (const stock of successfulResults) {
         for (const put of stock.topPuts ?? []) {
-          allScoredPuts.push({
+          const enriched = {
             ...put,
             stabilityScore: stock.stability?.score ?? 0,
             companyName: stock.quote?.name ?? stock.symbol,
@@ -331,11 +360,17 @@ export default function Home() {
               volume: stock.quote?.volume,
               avgVolume: stock.quote?.avgVolume,
             },
-          });
+          };
+          const existing = bestPerStock.get(put.symbol);
+          if (!existing || put.score > existing.score) {
+            bestPerStock.set(put.symbol, enriched);
+          }
         }
       }
-      allScoredPuts.sort((a, b) => b.score - a.score);
-      const top10 = allScoredPuts.slice(0, 10);
+      // Sort by score descending and take top 10 unique stocks
+      const top10 = Array.from(bestPerStock.values())
+        .sort((a: any, b: any) => b.score - a.score)
+        .slice(0, 10);
 
       const finalData = {
         marketRegime,
@@ -348,34 +383,41 @@ export default function Home() {
 
       setScreenerData(finalData);
 
-      // Fetch iTransformer predictions for top symbols (client-side ONNX, non-blocking)
+      // Fetch iTransformer predictions for top symbols using real features
       const topSymbols = [...new Set(top10.map((p: any) => p.symbol))].slice(0, 10) as string[];
       if (topSymbols.length > 0) {
-        import("@/lib/hf-model").then(({ runHFInference }) => {
-          Promise.allSettled(
-            topSymbols.map(async (sym) => {
-              try {
-                // Find this stock's price from screener results
-                const stock = successfulResults.find((s: any) => s.symbol === sym);
-                const price = stock?.quote?.price ?? 0;
-                if (!price) return;
-                // Simple placeholder features — model will use what it can
-                // In production, compute full features client-side
-                const dummyFeatures = Array.from({ length: 60 }, () =>
-                  new Array(100).fill(0)
-                );
-                const prediction = await runHFInference(sym, price, dummyFeatures);
-                if (prediction) {
-                  setScreenerForecasts((prev) => ({ ...prev, [sym]: prediction }));
-                }
-              } catch {
-                // Non-critical — HF model may not be deployed yet
-              }
-            })
-          );
-        }).catch(() => {
-          // onnxruntime-web not available or import failed
-        });
+        (async () => {
+          try {
+            const { runHFInference } = await import("@/lib/hf-model");
+            // Fetch features and run inference for each top symbol (2 at a time)
+            for (let si = 0; si < topSymbols.length; si += 2) {
+              const batch = topSymbols.slice(si, si + 2);
+              await Promise.allSettled(
+                batch.map(async (sym) => {
+                  try {
+                    const stock = successfulResults.find((s: any) => s.symbol === sym);
+                    const price = stock?.quote?.price ?? 0;
+                    if (!price) return;
+                    // Fetch real normalized features from server
+                    const fRes = await fetch(`/api/forecast?symbol=${encodeURIComponent(sym)}`);
+                    if (!fRes.ok) return;
+                    const fData = await fRes.json();
+                    const prediction = await runHFInference(sym, price, fData.featureMatrix);
+                    if (prediction) {
+                      // Attach historical prices for the chart
+                      (prediction as any)._historicalPrices = fData.historicalPrices;
+                      setScreenerForecasts((prev) => ({ ...prev, [sym]: prediction }));
+                    }
+                  } catch {
+                    // Non-critical
+                  }
+                })
+              );
+            }
+          } catch {
+            // onnxruntime-web not available or import failed
+          }
+        })();
       }
 
       // Set data source status and messaging
@@ -495,9 +537,9 @@ export default function Home() {
         </div>
       )}
 
-      {/* Colab Connection + Market Regime */}
+      {/* Model Status + Market Regime */}
       <div className="mb-6 space-y-3">
-        <ColabConnect onUrlChange={setColabUrl} />
+        <HFModelStatus />
         <MarketRegime regime={marketRegime} />
       </div>
 
@@ -599,6 +641,27 @@ export default function Home() {
           )}
           {prediction && !predictionLoading && prediction.symbol === analysis.symbol && (
             <PricePrediction prediction={prediction} />
+          )}
+
+          {/* iTransformer Forecast Chart */}
+          {singleForecastLoading && (
+            <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-6 text-center">
+              <div className="w-8 h-8 border-2 border-gray-600 border-t-purple-400 rounded-full animate-spin mx-auto mb-3" />
+              <p className="text-gray-400 text-sm">Loading iTransformer forecast...</p>
+            </div>
+          )}
+          {singleForecast && singleForecastData && !singleForecastLoading && singleForecast.symbol === analysis.symbol && (
+            <TimeSeriesChart
+              historicalPrices={singleForecastData.historicalPrices}
+              predictedPrices={singleForecast.predicted_prices}
+              currentPrice={singleForecast.current_price}
+              symbol={analysis.symbol}
+              confidence={singleForecast.confidence}
+              dteMarkers={filteredAnalysisPuts.slice(0, 3).map((p: any) => ({
+                dte: p.dte,
+                label: `${p.strikePrice} (${p.dte}d)`,
+              }))}
+            />
           )}
 
           {/* Company Stability Card */}
@@ -713,17 +776,31 @@ export default function Home() {
 
           {/* iTransformer Forecasts for top stocks */}
           {Object.keys(screenerForecasts).length > 0 && !screenLoading && (
-            <div className="space-y-2">
+            <div className="space-y-3">
               <h3 className="text-sm font-medium text-gray-400">
                 iTransformer Price Forecasts (Top Stocks)
               </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {Object.entries(screenerForecasts).map(([sym, fc]: [string, any]) => (
-                  <div key={sym}>
-                    <div className="text-xs text-gray-500 mb-1 font-medium">{sym}</div>
-                    <StockForecast forecast={fc} />
-                  </div>
-                ))}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {Object.entries(screenerForecasts).map(([sym, fc]: [string, any]) => {
+                  const historicalPrices = fc._historicalPrices;
+                  if (historicalPrices && fc.predicted_prices?.length > 0) {
+                    return (
+                      <TimeSeriesChart
+                        key={sym}
+                        historicalPrices={historicalPrices}
+                        predictedPrices={fc.predicted_prices}
+                        currentPrice={fc.current_price}
+                        symbol={sym}
+                        confidence={fc.confidence}
+                      />
+                    );
+                  }
+                  return (
+                    <div key={sym}>
+                      <StockForecast forecast={fc} />
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
