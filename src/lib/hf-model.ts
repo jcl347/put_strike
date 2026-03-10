@@ -1,18 +1,14 @@
 /**
- * HuggingFace ONNX Model Loader for iTransformer
+ * HuggingFace ONNX Model Loader for iTransformer — CLIENT-SIDE
  *
  * Downloads and caches the ONNX model from HuggingFace Hub,
- * then runs inference using onnxruntime-node.
+ * then runs inference in the browser using onnxruntime-web (WASM).
  *
- * No Flask/ngrok/Colab needed — runs entirely in serverless functions.
+ * This avoids the 250 MB Vercel serverless function limit since
+ * onnxruntime-web runs in the browser, not on the server.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-
-let ort: any = null;
-let session: any = null;
-let modelConfig: any = null;
-let loadPromise: Promise<void> | null = null;
 
 // HuggingFace repo ID — set via env var or default
 const HF_REPO_ID =
@@ -48,10 +44,7 @@ interface ModelConfig {
     dir_acc_60d: number;
     horizon_dir_acc: number[];
   };
-  normalization_stats: Record<
-    string,
-    { mean: number[]; std: number[] }
-  >;
+  normalization_stats: Record<string, { mean: number[]; std: number[] }>;
   onnx_size_mb: number;
 }
 
@@ -78,74 +71,72 @@ export interface HFPrediction {
   };
 }
 
+// Singleton state for browser-side model
+let ort: any = null;
+let session: any = null;
+let modelConfig: ModelConfig | null = null;
+let loadPromise: Promise<boolean> | null = null;
+
 /**
  * Load the ONNX model and config from HuggingFace Hub.
- * Uses singleton pattern — only loads once per serverless instance.
+ * Runs in the browser using onnxruntime-web (WASM backend).
+ * Caches the session — only downloads once per page lifecycle.
  */
 async function ensureModelLoaded(): Promise<boolean> {
   if (session && modelConfig) return true;
+  if (typeof window === "undefined") return false; // Server-side: skip
 
-  if (loadPromise) {
-    await loadPromise;
-    return session != null;
-  }
+  if (loadPromise) return loadPromise;
 
   loadPromise = (async () => {
     try {
-      // Dynamically import onnxruntime-node (server-side only)
-      ort = await import("onnxruntime-node");
+      // Dynamic import of onnxruntime-web (client-side only)
+      ort = await import("onnxruntime-web");
+
+      // Configure WASM backend
+      ort.env.wasm.numThreads = 1;
 
       // Fetch model config
-      const configRes = await fetch(`${HF_BASE}/model_config.json`, {
-        signal: AbortSignal.timeout(10000),
-      });
+      const configRes = await fetch(`${HF_BASE}/model_config.json`);
       if (!configRes.ok) {
-        console.error(
-          `[hf-model] Failed to fetch config: ${configRes.status}`
-        );
-        return;
+        console.warn(`[hf-model] Config fetch failed: ${configRes.status}`);
+        return false;
       }
       modelConfig = (await configRes.json()) as ModelConfig;
       console.log(
-        `[hf-model] Config loaded: ${modelConfig.num_features} features, ${modelConfig.forecast_horizon}d horizon`
+        `[hf-model] Config: ${modelConfig.num_features} features, ${modelConfig.forecast_horizon}d horizon`
       );
 
       // Fetch ONNX model binary
-      const modelRes = await fetch(`${HF_BASE}/itransformer.onnx`, {
-        signal: AbortSignal.timeout(30000),
-      });
+      const modelRes = await fetch(`${HF_BASE}/itransformer.onnx`);
       if (!modelRes.ok) {
-        console.error(
-          `[hf-model] Failed to fetch model: ${modelRes.status}`
-        );
-        return;
+        console.warn(`[hf-model] Model fetch failed: ${modelRes.status}`);
+        return false;
       }
       const modelBuffer = await modelRes.arrayBuffer();
 
-      // Create ONNX session
+      // Create ONNX session with WASM backend
       session = await ort.InferenceSession.create(
-        Buffer.from(modelBuffer),
-        {
-          executionProviders: ["cpu"],
-          graphOptimizationLevel: "all",
-        }
+        new Uint8Array(modelBuffer),
+        { executionProviders: ["wasm"] }
       );
       console.log(
-        `[hf-model] ONNX session created (${(modelBuffer.byteLength / 1024 / 1024).toFixed(1)} MB)`
+        `[hf-model] ONNX session ready (${(modelBuffer.byteLength / 1024 / 1024).toFixed(1)} MB, WASM)`
       );
+      return true;
     } catch (err) {
-      console.error("[hf-model] Load failed:", err);
+      console.warn("[hf-model] Load failed:", err);
       session = null;
       modelConfig = null;
+      return false;
     }
   })();
 
-  await loadPromise;
-  return session != null;
+  return loadPromise;
 }
 
 /**
- * Run iTransformer inference for a stock.
+ * Run iTransformer inference in the browser.
  *
  * @param symbol - Stock ticker
  * @param currentPrice - Current stock price
@@ -168,14 +159,13 @@ export async function runHFInference(
     if (inputData.length > lookback) {
       inputData = inputData.slice(-lookback);
     } else if (inputData.length < lookback) {
-      // Pad with zeros at the beginning
-      const padding = Array.from({ length: lookback - inputData.length }, () =>
-        new Array(numFeatures).fill(0)
+      const padding = Array.from(
+        { length: lookback - inputData.length },
+        () => new Array(numFeatures).fill(0)
       );
       inputData = [...padding, ...inputData];
     }
 
-    // Ensure feature dimension matches
     inputData = inputData.map((row) => {
       if (row.length < numFeatures) {
         return [...row, ...new Array(numFeatures - row.length).fill(0)];
@@ -183,7 +173,7 @@ export async function runHFInference(
       return row.slice(0, numFeatures);
     });
 
-    // Flatten to 1D for ONNX tensor
+    // Flatten to 1D Float32Array for ONNX tensor
     const flatData = new Float32Array(lookback * numFeatures);
     for (let i = 0; i < lookback; i++) {
       for (let j = 0; j < numFeatures; j++) {
@@ -197,19 +187,13 @@ export async function runHFInference(
       numFeatures,
     ]);
     const results = await session.run({ features: inputTensor });
-    const forecast = Array.from(results.forecast.data as Float32Array);
+    const forecast = Array.from(results.forecast.data as Float32Array) as number[];
 
-    // Convert returns to prices
-    const predictedPrices = forecast.map(
-      (r: number) => currentPrice * (1 + r)
-    );
+    const predictedPrices = forecast.map((r) => currentPrice * (1 + r));
 
-    // Confidence bands using historical volatility estimate
-    const dailyVol = 0.015; // ~24% annualized, conservative default
-    const days = Array.from(
-      { length: forecast.length },
-      (_, i) => i + 1
-    );
+    // Confidence bands
+    const dailyVol = 0.015;
+    const days = Array.from({ length: forecast.length }, (_, i) => i + 1);
     const diffusion = days.map((d) => dailyVol * Math.sqrt(d));
 
     return {
@@ -222,20 +206,16 @@ export async function runHFInference(
       horizon_days: modelConfig.forecast_horizon,
       confidence: {
         lower_95: forecast.map(
-          (r: number, i: number) =>
-            currentPrice * (1 + r - 1.96 * diffusion[i])
+          (r, i) => currentPrice * (1 + r - 1.96 * diffusion[i])
         ),
         upper_95: forecast.map(
-          (r: number, i: number) =>
-            currentPrice * (1 + r + 1.96 * diffusion[i])
+          (r, i) => currentPrice * (1 + r + 1.96 * diffusion[i])
         ),
         lower_68: forecast.map(
-          (r: number, i: number) =>
-            currentPrice * (1 + r - diffusion[i])
+          (r, i) => currentPrice * (1 + r - diffusion[i])
         ),
         upper_68: forecast.map(
-          (r: number, i: number) =>
-            currentPrice * (1 + r + diffusion[i])
+          (r, i) => currentPrice * (1 + r + diffusion[i])
         ),
       },
       model_confidence: Math.max(
@@ -250,13 +230,13 @@ export async function runHFInference(
       },
     };
   } catch (err) {
-    console.error("[hf-model] Inference failed:", err);
+    console.warn("[hf-model] Inference failed:", err);
     return null;
   }
 }
 
 /**
- * Get normalization stats for a specific stock.
+ * Get normalization stats for a specific stock from the model config.
  * Falls back to aggregate stats if stock-specific stats aren't available.
  */
 export function getNormStats(
@@ -268,11 +248,7 @@ export function getNormStats(
     return modelConfig.normalization_stats[symbol];
   }
 
-  // Compute aggregate mean of all stock stats
-  const allStats = Object.values(modelConfig.normalization_stats) as {
-    mean: number[];
-    std: number[];
-  }[];
+  const allStats = Object.values(modelConfig.normalization_stats);
   if (allStats.length === 0) return null;
 
   const numFeatures = allStats[0].mean.length;
@@ -290,14 +266,10 @@ export function getNormStats(
 }
 
 /**
- * Check if the HF model is available and get its status.
+ * Check if the HF model is available.
  */
-export async function getModelStatus(): Promise<{
-  available: boolean;
-  config: ModelConfig | null;
-}> {
-  const loaded = await ensureModelLoaded();
-  return { available: loaded, config: modelConfig };
+export async function isModelAvailable(): Promise<boolean> {
+  return ensureModelLoaded();
 }
 
 export function getModelConfig(): ModelConfig | null {
