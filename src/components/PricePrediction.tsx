@@ -245,33 +245,43 @@ export default function PricePrediction({ prediction: p }: Props) {
                   width: `${((selectedForecast.upper68 - selectedForecast.lower68) / (selectedForecast.upper95 - selectedForecast.lower95)) * 100}%`,
                 }}
               />
-              {/* Current price marker */}
-              <div
-                className="absolute h-full w-0.5 bg-white"
-                style={{
-                  left: `${((p.currentPrice - selectedForecast.lower95) / (selectedForecast.upper95 - selectedForecast.lower95)) * 100}%`,
-                }}
-              />
-              {/* Predicted marker */}
-              <div
-                className="absolute h-full w-1.5 bg-blue-400 rounded-full"
-                style={{
-                  left: `${((selectedForecast.predicted - selectedForecast.lower95) / (selectedForecast.upper95 - selectedForecast.lower95)) * 100}%`,
-                }}
-              />
-              {/* Strike suggestion */}
+              {/* Strike suggestion — green */}
               <div
                 className="absolute h-full w-0.5 bg-green-400"
                 style={{
                   left: `${Math.max(0, ((p.optimalStrike - selectedForecast.lower95) / (selectedForecast.upper95 - selectedForecast.lower95)) * 100)}%`,
                 }}
               />
+              {/* Predicted marker — blue */}
+              <div
+                className="absolute h-full w-1.5 bg-blue-400 rounded-full"
+                style={{
+                  left: `${((selectedForecast.predicted - selectedForecast.lower95) / (selectedForecast.upper95 - selectedForecast.lower95)) * 100}%`,
+                }}
+              />
+              {/* Current price marker — yellow */}
+              <div
+                className="absolute h-full w-0.5 bg-yellow-400"
+                style={{
+                  left: `${((p.currentPrice - selectedForecast.lower95) / (selectedForecast.upper95 - selectedForecast.lower95)) * 100}%`,
+                }}
+              />
             </div>
-            <div className="flex justify-between mt-1 text-xs text-gray-600">
-              <span>${selectedForecast.lower95.toFixed(0)}</span>
-              <span className="text-green-500">Strike: ${p.optimalStrike}</span>
-              <span>Now: ${p.currentPrice.toFixed(0)}</span>
-              <span>${selectedForecast.upper95.toFixed(0)}</span>
+            {/* Labels — color-matched to lines */}
+            <div className="flex justify-between mt-1 text-xs">
+              <span className="text-red-400">${selectedForecast.lower95.toFixed(0)}</span>
+              <span className="text-green-400">Strike: ${p.optimalStrike}</span>
+              <span className="text-blue-400">Predicted: ${selectedForecast.predicted.toFixed(0)}</span>
+              <span className="text-yellow-400">Now: ${p.currentPrice.toFixed(0)}</span>
+              <span className="text-green-400">${selectedForecast.upper95.toFixed(0)}</span>
+            </div>
+            {/* Legend */}
+            <div className="flex gap-4 mt-1 text-[10px] text-gray-500 justify-center">
+              <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-green-400" />Strike</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-full bg-blue-400" />Predicted</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-yellow-400" />Current</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 rounded-sm bg-blue-900/40" />68% CI</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 rounded-sm bg-gray-700/50" />95% CI</span>
             </div>
           </div>
         )}
