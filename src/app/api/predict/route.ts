@@ -14,6 +14,7 @@ import {
   type FundamentalData,
 } from "@/lib/features";
 import { generatePrediction } from "@/lib/prediction";
+import { runHFInference, getNormStats } from "@/lib/hf-model";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -23,7 +24,8 @@ export const maxDuration = 30;
 /**
  * Price prediction endpoint.
  * Computes 300+ features and runs ensemble prediction models.
- * If a Colab GPU inference endpoint is configured, also calls that.
+ * Also runs iTransformer inference via HuggingFace ONNX model.
+ * Falls back to Colab GPU if HF model unavailable and colab_url is configured.
  *
  * GET /api/predict?symbol=AAPL&colab_url=https://xxxx.ngrok.io
  */
@@ -121,11 +123,42 @@ export async function GET(request: NextRequest) {
       context?.trendDirection ?? "sideways",
     );
 
-    // Try Colab iTransformer inference if URL is configured
+    // Try HuggingFace iTransformer inference (preferred — no Colab needed)
+    let hfPrediction: any = null;
+    let hfStatus: "connected" | "unavailable" | "not_configured" = "not_configured";
+
+    try {
+      // Build normalized feature matrix from OHLCV for HF model
+      const normStats = getNormStats(upperSymbol);
+      if (normStats && historyResult.length >= 60) {
+        // Simple OHLCV-based feature matrix for the model
+        // The model expects z-score normalized features
+        const featureMatrix = historyResult.slice(-60).map((d, _i) => {
+          // Basic features — the model handles feature computation internally
+          const row = [d.close, d.high, d.low, d.open, d.volume];
+          // Pad to match model's expected feature count using normalization stats
+          while (row.length < normStats.mean.length) {
+            row.push(0);
+          }
+          // Z-score normalize
+          return row.map((v, j) => {
+            const std = normStats.std[j] || 1;
+            return Math.max(-5, Math.min(5, (v - normStats.mean[j]) / std));
+          });
+        });
+
+        hfPrediction = await runHFInference(upperSymbol, quote.price, featureMatrix);
+        hfStatus = hfPrediction ? "connected" : "unavailable";
+      }
+    } catch {
+      hfStatus = "unavailable";
+    }
+
+    // Fallback: Try Colab iTransformer inference if URL is configured
     let colabPrediction: any = null;
     let colabStatus: "connected" | "unavailable" | "not_configured" = "not_configured";
 
-    if (colabUrl) {
+    if (colabUrl && !hfPrediction) {
       try {
         // Send all available OHLCV data to Colab — it computes features server-side
         // The iTransformer server needs enough history for feature computation (200+ days ideal)
@@ -163,9 +196,11 @@ export async function GET(request: NextRequest) {
       context,
       quote,
       hv,
-      // Colab integration
-      colabPrediction,
-      colabStatus,
+      // iTransformer predictions (HuggingFace preferred, Colab fallback)
+      hfPrediction,
+      hfStatus,
+      colabPrediction: hfPrediction ?? colabPrediction,
+      colabStatus: hfPrediction ? hfStatus : colabStatus,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Prediction failed";

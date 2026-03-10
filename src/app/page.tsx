@@ -12,6 +12,7 @@ import PutDecisionAssistant from "@/components/PutDecisionAssistant";
 import PricePrediction from "@/components/PricePrediction";
 import ColabConnect from "@/components/ColabConnect";
 import DTESelector, { DEFAULT_DTE, type DTERange } from "@/components/DTESelector";
+import StockForecast from "@/components/StockForecast";
 
 interface AnalysisData {
   symbol: string;
@@ -129,6 +130,8 @@ export default function Home() {
   const [dataSourceStatus, setDataSourceStatus] = useState<"connected" | "degraded" | "down" | null>(null);
   const abortRef = useRef(false);
   const [dteRange, setDteRange] = useState<DTERange>(DEFAULT_DTE);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [screenerForecasts, setScreenerForecasts] = useState<Record<string, any>>({});
 
   // Safely parse API response - handles HTML error pages from Vercel
   const safeParseResponse = async (res: Response): Promise<{ data: Record<string, unknown> | null; rawText: string }> => {
@@ -344,6 +347,29 @@ export default function Home() {
       };
 
       setScreenerData(finalData);
+
+      // Fetch iTransformer predictions for top 10 symbols (non-blocking)
+      const topSymbols = [...new Set(top10.map((p: any) => p.symbol))].slice(0, 10) as string[];
+      if (topSymbols.length > 0) {
+        Promise.allSettled(
+          topSymbols.map(async (sym) => {
+            try {
+              const res = await fetch(`/api/predict?symbol=${encodeURIComponent(sym)}`);
+              if (res.ok) {
+                const data = await res.json();
+                if (data.hfPrediction || data.colabPrediction) {
+                  setScreenerForecasts((prev) => ({
+                    ...prev,
+                    [sym]: data.hfPrediction || data.colabPrediction,
+                  }));
+                }
+              }
+            } catch {
+              // Non-critical
+            }
+          })
+        );
+      }
 
       // Set data source status and messaging
       const totalFailed = progress.failedSymbols.length;
@@ -676,6 +702,23 @@ export default function Home() {
           {/* Top 10 Picks — filtered by DTE */}
           {filteredTop10.length > 0 && !screenLoading && (
             <Top10Puts puts={filteredTop10} />
+          )}
+
+          {/* iTransformer Forecasts for top stocks */}
+          {Object.keys(screenerForecasts).length > 0 && !screenLoading && (
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium text-gray-400">
+                iTransformer Price Forecasts (Top Stocks)
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {Object.entries(screenerForecasts).map(([sym, fc]: [string, any]) => (
+                  <div key={sym}>
+                    <div className="text-xs text-gray-500 mb-1 font-medium">{sym}</div>
+                    <StockForecast forecast={fc} />
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
 
           {/* Decision Assistant for top stocks */}
