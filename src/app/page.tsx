@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 import SymbolSearch from "@/components/SymbolSearch";
 import MarketRegime from "@/components/MarketRegime";
 import StockQuoteCard from "@/components/StockQuoteCard";
@@ -147,7 +147,8 @@ export default function Home() {
     setActiveTab("analyze");
     setDataSourceStatus(null);
     try {
-      const res = await fetch(`/api/analyze?symbol=${encodeURIComponent(symbol)}&minDte=${dteRange.min}&maxDte=${dteRange.max}`);
+      // Fetch widest DTE range; client-side DTESelector filters the results instantly
+      const res = await fetch(`/api/analyze?symbol=${encodeURIComponent(symbol)}&minDte=1&maxDte=120`);
       const { data, rawText } = await safeParseResponse(res);
 
       if (!res.ok) {
@@ -179,7 +180,7 @@ export default function Home() {
       setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [colabUrl, dteRange]);
+  }, [colabUrl]);
 
   // Fetch price prediction for a symbol (with optional Colab GPU inference)
   const fetchPrediction = useCallback(async (symbol: string, colabEndpoint?: string | null) => {
@@ -246,7 +247,8 @@ export default function Home() {
 
         const batchResults = await Promise.allSettled(
           batch.map(async (sym) => {
-            const dteParams = `&minDte=${dteRange.min}&maxDte=${dteRange.max}`;
+            // Fetch widest DTE range; client-side DTESelector filters results instantly
+            const dteParams = `&minDte=1&maxDte=120`;
             const url = vix != null
               ? `/api/screen-single?symbol=${encodeURIComponent(sym)}&vix=${vix}${dteParams}`
               : `/api/screen-single?symbol=${encodeURIComponent(sym)}${dteParams}`;
@@ -364,10 +366,46 @@ export default function Home() {
       setScreenLoading(false);
       setScreenProgress(null);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dteRange]);
+  }, []);
 
   const marketRegime = analysis?.marketRegime ?? screenerData?.marketRegime ?? null;
+
+  // Client-side DTE filtering — filter already-fetched puts by selected DTE range
+  const filteredAnalysisPuts = useMemo(() => {
+    if (!analysis?.scoredPuts) return [];
+    return analysis.scoredPuts.filter(
+      (p) => p.dte >= dteRange.min && p.dte <= dteRange.max
+    );
+  }, [analysis?.scoredPuts, dteRange]);
+
+  const filteredTop10 = useMemo(() => {
+    if (!screenerData?.top10) return [];
+    return screenerData.top10.filter(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (p: any) => p.dte >= dteRange.min && p.dte <= dteRange.max
+    );
+  }, [screenerData?.top10, dteRange]);
+
+  const filteredScreenerResults = useMemo(() => {
+    if (!screenerData?.results) return [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return screenerData.results.map((stock: any) => ({
+      ...stock,
+      topPuts: stock.topPuts?.filter(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (p: any) => p.dte >= dteRange.min && p.dte <= dteRange.max
+      ) ?? [],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    })).filter((stock: any) => stock.topPuts.length > 0);
+  }, [screenerData?.results, dteRange]);
+
+  // Count for DTE filter badge
+  const totalUnfilteredPuts = activeTab === "analyze"
+    ? (analysis?.scoredPuts?.length ?? 0)
+    : (screenerData?.top10?.length ?? 0);
+  const totalFilteredPuts = activeTab === "analyze"
+    ? filteredAnalysisPuts.length
+    : filteredTop10.length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
@@ -456,8 +494,6 @@ export default function Home() {
             {screenLoading ? "Screening..." : "Screen Top Stocks"}
           </button>
         </div>
-        {/* DTE Range Selector */}
-        <DTESelector selected={dteRange} onChange={setDteRange} />
       </div>
 
       {/* Error Popup */}
@@ -472,6 +508,23 @@ export default function Home() {
         <div className="text-center py-16">
           <div className="w-10 h-10 border-2 border-gray-600 border-t-blue-400 rounded-full animate-spin mx-auto mb-4" />
           <p className="text-gray-400">Fetching live options data and computing scores...</p>
+        </div>
+      )}
+
+      {/* DTE Filter — shown when results are available */}
+      {((activeTab === "analyze" && analysis && !loading) ||
+        (activeTab === "screen" && (screenerData || screenLoading))) && (
+        <div className="mb-4">
+          <div className="flex items-center gap-3">
+            <DTESelector selected={dteRange} onChange={setDteRange} />
+            {totalUnfilteredPuts > 0 && !loading && !screenLoading && (
+              <span className="text-xs text-gray-500 whitespace-nowrap">
+                {totalFilteredPuts === totalUnfilteredPuts
+                  ? `${totalFilteredPuts} puts`
+                  : `${totalFilteredPuts} of ${totalUnfilteredPuts} puts`}
+              </span>
+            )}
+          </div>
         </div>
       )}
 
@@ -567,7 +620,7 @@ export default function Home() {
 
           <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
             <PutTable
-              puts={analysis.scoredPuts}
+              puts={filteredAnalysisPuts}
               title={`Top Put Selling Opportunities for ${analysis.symbol}`}
             />
           </div>
@@ -620,9 +673,9 @@ export default function Home() {
       {/* Screener Results */}
       {activeTab === "screen" && (
         <div className="space-y-6">
-          {/* Top 10 Picks */}
-          {screenerData?.top10 && screenerData.top10.length > 0 && !screenLoading && (
-            <Top10Puts puts={screenerData.top10} />
+          {/* Top 10 Picks — filtered by DTE */}
+          {filteredTop10.length > 0 && !screenLoading && (
+            <Top10Puts puts={filteredTop10} />
           )}
 
           {/* Decision Assistant for top stocks */}
@@ -655,9 +708,9 @@ export default function Home() {
             </div>
           )}
 
-          {/* Full Results */}
+          {/* Full Results — filtered by DTE */}
           <ScreenerResults
-            results={screenerData?.results ?? []}
+            results={screenLoading ? (screenerData?.results ?? []) : filteredScreenerResults}
             loading={screenLoading}
             progress={screenProgress}
             onAnalyze={analyzeSymbol}
