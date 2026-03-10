@@ -240,14 +240,15 @@ describe("Put Ranking", () => {
     expect(ranked.length).toBe(1);
   });
 
-  test("filters out puts with DTE < 7", () => {
+  test("includes all puts with DTE >= 1 (API controls DTE range)", () => {
     const candidates = [
       makePut({ dte: 3 }),
       makePut({ dte: 45 }),
     ];
 
     const ranked = rankPuts(candidates, 50, normalRegime, 10);
-    expect(ranked.every((r) => r.dte >= 7)).toBe(true);
+    expect(ranked.length).toBe(2);
+    expect(ranked.every((r) => r.dte >= 1)).toBe(true);
   });
 });
 

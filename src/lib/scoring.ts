@@ -448,7 +448,7 @@ export function rankPuts(
 ): ScoredPut[] {
   return candidates
     .map((c) => scorePut(c, ivRank, marketRegime, stability))
-    .filter((s) => (s.bid > 0 || s.lastPrice > 0) && s.dte >= 7)
+    .filter((s) => (s.bid > 0 || s.lastPrice > 0) && s.dte >= 1)
     .sort((a, b) => b.score - a.score)
     .slice(0, topN);
 }
