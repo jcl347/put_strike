@@ -14,6 +14,7 @@ import HFModelStatus from "@/components/HFModelStatus";
 import DTESelector, { DEFAULT_DTE, type DTERange } from "@/components/DTESelector";
 import StockForecast from "@/components/StockForecast";
 import TimeSeriesChart from "@/components/TimeSeriesChart";
+import ConcordanceCard from "@/components/ConcordanceCard";
 
 interface AnalysisData {
   symbol: string;
@@ -137,6 +138,7 @@ export default function Home() {
   const [singleForecastLoading, setSingleForecastLoading] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [singleForecastData, setSingleForecastData] = useState<any>(null);
+  const [forecastError, setForecastError] = useState<string | null>(null);
 
   // Safely parse API response - handles HTML error pages from Vercel
   const safeParseResponse = async (res: Response): Promise<{ data: Record<string, unknown> | null; rawText: string }> => {
@@ -171,10 +173,12 @@ export default function Home() {
       if (!data) {
         throw new Error("Server returned invalid response (not JSON)");
       }
-      setAnalysis(data as unknown as AnalysisData);
+      const analysisData = data as unknown as AnalysisData;
+      setAnalysis(analysisData);
       setDataSourceStatus("connected");
-      // Trigger prediction in background
+      // Trigger predictions in background — both statistical ensemble and iTransformer
       fetchPrediction(symbol);
+      fetchSingleForecast(symbol, analysisData.quote.price);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Analysis failed";
       if (msg.includes("fetch failed") || msg.includes("Failed to fetch")) {
@@ -213,21 +217,56 @@ export default function Home() {
     setSingleForecastLoading(true);
     setSingleForecast(null);
     setSingleForecastData(null);
+    setForecastError(null);
     try {
+      // First check if the model is available and the symbol was trained on
+      const { runHFInference, isTrainedSymbol, isModelAvailable, getLastError } = await import("@/lib/hf-model");
+
+      const modelReady = await isModelAvailable();
+      if (!modelReady) {
+        const err = getLastError();
+        const msg = err || "iTransformer model not available";
+        console.warn(`[forecast] ${symbol}: ${msg}`);
+        setForecastError(msg);
+        return;
+      }
+
+      if (!isTrainedSymbol(symbol)) {
+        const msg = `${symbol} is not in the iTransformer training set — forecast unavailable for this stock`;
+        console.info(`[forecast] ${msg}`);
+        setForecastError(msg);
+        return;
+      }
+
       // Fetch real features from server
+      console.log(`[forecast] Fetching features for ${symbol}...`);
       const res = await fetch(`/api/forecast?symbol=${encodeURIComponent(symbol)}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        const msg = `Feature computation failed: ${errData.error || `HTTP ${res.status}`}`;
+        console.error(`[forecast] ${symbol}: ${msg}`);
+        setForecastError(msg);
+        return;
+      }
       const data = await res.json();
       setSingleForecastData(data);
 
       // Run client-side ONNX inference with real features
-      const { runHFInference } = await import("@/lib/hf-model");
+      console.log(`[forecast] Running iTransformer inference for ${symbol}...`);
       const prediction = await runHFInference(symbol, price, data.featureMatrix);
       if (prediction) {
+        console.log(`[forecast] ${symbol}: iTransformer prediction complete`);
         setSingleForecast(prediction);
+      } else {
+        const err = getLastError();
+        const msg = err || `iTransformer inference returned null for ${symbol}`;
+        console.error(`[forecast] ${msg}`);
+        setForecastError(msg);
       }
-    } catch {
-      // Non-critical
+    } catch (err) {
+      const msg = `iTransformer forecast failed: ${err instanceof Error ? err.message : String(err)}`;
+      console.error(`[forecast] ${symbol}: ${msg}`);
+      setForecastError(msg);
     } finally {
       setSingleForecastLoading(false);
     }
@@ -387,10 +426,19 @@ export default function Home() {
       if (topSymbols.length > 0) {
         (async () => {
           try {
-            const { runHFInference } = await import("@/lib/hf-model");
-            // Fetch features and run inference for each top symbol (2 at a time)
-            for (let si = 0; si < topSymbols.length; si += 2) {
-              const batch = topSymbols.slice(si, si + 2);
+            const { runHFInference, isTrainedSymbol, isModelAvailable } = await import("@/lib/hf-model");
+            const modelReady = await isModelAvailable();
+            if (!modelReady) {
+              console.warn("[screener-forecast] iTransformer model not available, skipping forecasts");
+              return;
+            }
+            // Filter to only trained symbols
+            const trainedSymbols = topSymbols.filter((sym) => isTrainedSymbol(sym));
+            console.log(`[screener-forecast] Running iTransformer for ${trainedSymbols.length}/${topSymbols.length} trained symbols`);
+
+            // Fetch features and run inference for each trained symbol (2 at a time)
+            for (let si = 0; si < trainedSymbols.length; si += 2) {
+              const batch = trainedSymbols.slice(si, si + 2);
               await Promise.allSettled(
                 batch.map(async (sym) => {
                   try {
@@ -399,22 +447,28 @@ export default function Home() {
                     if (!price) return;
                     // Fetch real normalized features from server
                     const fRes = await fetch(`/api/forecast?symbol=${encodeURIComponent(sym)}`);
-                    if (!fRes.ok) return;
+                    if (!fRes.ok) {
+                      console.warn(`[screener-forecast] ${sym}: feature fetch failed HTTP ${fRes.status}`);
+                      return;
+                    }
                     const fData = await fRes.json();
                     const prediction = await runHFInference(sym, price, fData.featureMatrix);
                     if (prediction) {
                       // Attach historical prices for the chart
                       (prediction as any)._historicalPrices = fData.historicalPrices;
                       setScreenerForecasts((prev) => ({ ...prev, [sym]: prediction }));
+                      console.log(`[screener-forecast] ${sym}: forecast complete`);
+                    } else {
+                      console.warn(`[screener-forecast] ${sym}: inference returned null`);
                     }
-                  } catch {
-                    // Non-critical
+                  } catch (err) {
+                    console.error(`[screener-forecast] ${sym}: ${err instanceof Error ? err.message : String(err)}`);
                   }
                 })
               );
             }
-          } catch {
-            // onnxruntime-web not available or import failed
+          } catch (err) {
+            console.error(`[screener-forecast] Model import/load failed: ${err instanceof Error ? err.message : String(err)}`);
           }
         })();
       }
@@ -624,18 +678,38 @@ export default function Home() {
               <p className="text-gray-400 text-sm">Loading iTransformer forecast...</p>
             </div>
           )}
+          {forecastError && !singleForecastLoading && !singleForecast && (
+            <div className="bg-gray-800/50 border border-yellow-700/50 rounded-lg px-4 py-3 flex items-start gap-2">
+              <span className="text-yellow-500 text-sm mt-0.5">!</span>
+              <div>
+                <p className="text-sm text-yellow-400">iTransformer Forecast Unavailable</p>
+                <p className="text-xs text-gray-500 mt-0.5">{forecastError}</p>
+              </div>
+            </div>
+          )}
           {singleForecast && singleForecastData && !singleForecastLoading && singleForecast.symbol === analysis.symbol && (
-            <TimeSeriesChart
-              historicalPrices={singleForecastData.historicalPrices}
-              predictedPrices={singleForecast.predicted_prices}
-              currentPrice={singleForecast.current_price}
-              symbol={analysis.symbol}
-              confidence={singleForecast.confidence}
-              dteMarkers={filteredAnalysisPuts.slice(0, 3).map((p: any) => ({
-                dte: p.dte,
-                label: `${p.strikePrice} (${p.dte}d)`,
-              }))}
-            />
+            <>
+              <TimeSeriesChart
+                historicalPrices={singleForecastData.historicalPrices}
+                predictedPrices={singleForecast.predicted_prices}
+                currentPrice={singleForecast.current_price}
+                symbol={analysis.symbol}
+                confidence={singleForecast.confidence}
+                dteMarkers={filteredAnalysisPuts.slice(0, 3).map((p: any) => ({
+                  dte: p.dte,
+                  label: `${p.strikePrice} (${p.dte}d)`,
+                }))}
+              />
+
+              {/* Concordance Validation — iTransformer vs Statistical Ensemble */}
+              {prediction && prediction.symbol === analysis.symbol && (
+                <ConcordanceCard
+                  iTransformerForecast={singleForecast}
+                  ensemblePrediction={prediction}
+                  symbol={analysis.symbol}
+                />
+              )}
+            </>
           )}
 
           {/* Company Stability Card */}
