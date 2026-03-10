@@ -29,9 +29,9 @@ export async function GET(request: NextRequest) {
 
   try {
     // Fetch OHLCV (1 year) + macro data in parallel
-    const [ohlcv, macroData] = await Promise.all([
+    const [ohlcv, rawMacro] = await Promise.all([
       fetchOHLCV(upperSymbol, 1),
-      fetchMacroData(),
+      fetchMacroDataWithDates(),
     ]);
 
     if (ohlcv.length < 70) {
@@ -40,6 +40,11 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    // Align macro data to stock dates using forward-fill
+    // This matches the Python training: macro_df.reindex(df.index, method="ffill")
+    const stockDates = ohlcv.map(d => d.date);
+    const macroData = alignMacroToStockDates(rawMacro, stockDates);
 
     // Compute 83 features for all available days
     const rawFeatures = computeITransformerFeatures(ohlcv, macroData);
@@ -122,7 +127,23 @@ async function fetchOHLCV(symbol: string, years: number): Promise<OHLCV[]> {
     }));
 }
 
-async function fetchMacroData(): Promise<MacroData> {
+/**
+ * Raw macro data keyed by date string for alignment.
+ */
+interface RawMacroData {
+  vix?: Record<string, number>;
+  vix3m?: Record<string, number>;
+  tnx?: Record<string, number>;
+  dxy?: Record<string, number>;
+  gold?: Record<string, number>;
+  oil?: Record<string, number>;
+}
+
+/**
+ * Fetch macro data with date keys (not raw arrays).
+ * This allows proper date alignment with any stock's trading days.
+ */
+async function fetchMacroDataWithDates(): Promise<RawMacroData> {
   const YahooFinanceModule = (await import("yahoo-finance2")).default;
   let yahooFinance: any;
   try {
@@ -145,9 +166,8 @@ async function fetchMacroData(): Promise<MacroData> {
   const startDate = new Date();
   startDate.setFullYear(startDate.getFullYear() - 1);
 
-  const macro: MacroData = {};
+  const macro: RawMacroData = {};
 
-  // Fetch in parallel, but don't fail if some are unavailable
   const results = await Promise.allSettled(
     tickers.map(async ({ symbol, key }) => {
       const history: any = await yahooFinance.chart(symbol, {
@@ -155,20 +175,70 @@ async function fetchMacroData(): Promise<MacroData> {
         period2: endDate,
         interval: "1d",
       });
-      const closes = (history.quotes ?? [])
-        .filter((q: any) => q.close > 0)
-        .map((q: any) => q.close as number);
-      return { key, closes };
+      const dateMap: Record<string, number> = {};
+      for (const q of (history.quotes ?? [])) {
+        if (q.close > 0) {
+          const dateStr = new Date(q.date).toISOString().split("T")[0];
+          dateMap[dateStr] = q.close;
+        }
+      }
+      return { key, dateMap };
     })
   );
 
   for (const r of results) {
     if (r.status === "fulfilled") {
-      (macro as any)[r.value.key] = r.value.closes;
+      (macro as any)[r.value.key] = r.value.dateMap;
     }
   }
 
   return macro;
+}
+
+/**
+ * Align macro data to stock trading dates using forward-fill.
+ * Matches Python: macro_df["^VIX"].reindex(df.index, method="ffill")
+ *
+ * For each stock date, look up the macro value for that date.
+ * If not available, use the most recent prior value (forward-fill).
+ */
+function alignMacroToStockDates(
+  rawMacro: RawMacroData,
+  stockDates: string[]
+): MacroData {
+  const aligned: MacroData = {};
+
+  function forwardFillAlign(dateMap: Record<string, number> | undefined): number[] | undefined {
+    if (!dateMap) return undefined;
+    const result: number[] = [];
+    let lastValue = 0;
+
+    // Get all macro dates sorted for forward-fill lookup
+    const macroDates = Object.keys(dateMap).sort();
+    let macroIdx = 0;
+
+    for (const stockDate of stockDates) {
+      // Advance macroIdx to find the most recent macro date <= stockDate
+      while (macroIdx < macroDates.length - 1 && macroDates[macroIdx + 1] <= stockDate) {
+        macroIdx++;
+      }
+      // Use the macro value if date is <= stockDate
+      if (macroIdx < macroDates.length && macroDates[macroIdx] <= stockDate) {
+        lastValue = dateMap[macroDates[macroIdx]];
+      }
+      result.push(lastValue);
+    }
+    return result;
+  }
+
+  aligned.vix = forwardFillAlign(rawMacro.vix);
+  aligned.vix3m = forwardFillAlign(rawMacro.vix3m);
+  aligned.tnx = forwardFillAlign(rawMacro.tnx);
+  aligned.dxy = forwardFillAlign(rawMacro.dxy);
+  aligned.gold = forwardFillAlign(rawMacro.gold);
+  aligned.oil = forwardFillAlign(rawMacro.oil);
+
+  return aligned;
 }
 
 // Model config cache (avoid fetching on every request)
