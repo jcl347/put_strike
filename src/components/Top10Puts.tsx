@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { getChecklistSummary, type ChecklistInput, type StockContext } from "@/lib/checklist";
 
 interface Top10Put {
@@ -157,21 +157,10 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [showGuide, setShowGuide] = useState(false);
 
-  // Select the BEST put per stock (highest score), then take top 10 stocks
-  const bestPerStock = useMemo(() => {
-    const stockMap = new Map<string, Top10Put>();
-    for (const put of puts) {
-      const existing = stockMap.get(put.symbol);
-      if (!existing || put.score > existing.score) {
-        stockMap.set(put.symbol, put);
-      }
-    }
-    return Array.from(stockMap.values())
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 10);
-  }, [puts]);
+  // Already deduplicated upstream (1 best per stock, sorted by score)
+  const displayPuts = puts.slice(0, 10);
 
-  if (bestPerStock.length === 0) return null;
+  if (displayPuts.length === 0) return null;
 
   return (
     <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
@@ -189,7 +178,7 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
           </button>
         </div>
         <span className="text-xs text-gray-500">
-          Best put per stock, ranked by score
+          Best put per stock across {displayPuts.length} companies, ranked by score
         </span>
       </div>
 
@@ -199,7 +188,7 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
       {showGuide && <CrossComparisonGuide />}
 
       <div className="space-y-1">
-        {bestPerStock.map((put, i) => {
+        {displayPuts.map((put, i) => {
           const colors = recColors[put.recommendation] ?? recColors.NEUTRAL;
           const isExpanded = expandedRow === i;
           const midPrice = (put.bid + put.ask) / 2;
