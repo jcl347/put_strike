@@ -301,13 +301,13 @@ export default function Home() {
         return bTop - aTop;
       });
 
-      // Build global top 10 picks across all stocks
-      // Include checklist context for inline flag display
+      // Build global top 10 picks — one best put per stock for maximum diversity
+      // This ensures a wide range of companies/sectors and DTEs to compare
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const allScoredPuts: any[] = [];
+      const bestPerStock = new Map<string, any>();
       for (const stock of successfulResults) {
         for (const put of stock.topPuts ?? []) {
-          allScoredPuts.push({
+          const enriched = {
             ...put,
             stabilityScore: stock.stability?.score ?? 0,
             companyName: stock.quote?.name ?? stock.symbol,
@@ -327,11 +327,17 @@ export default function Home() {
               volume: stock.quote?.volume,
               avgVolume: stock.quote?.avgVolume,
             },
-          });
+          };
+          const existing = bestPerStock.get(put.symbol);
+          if (!existing || put.score > existing.score) {
+            bestPerStock.set(put.symbol, enriched);
+          }
         }
       }
-      allScoredPuts.sort((a, b) => b.score - a.score);
-      const top10 = allScoredPuts.slice(0, 10);
+      // Sort by score descending and take top 10 unique stocks
+      const top10 = Array.from(bestPerStock.values())
+        .sort((a: any, b: any) => b.score - a.score)
+        .slice(0, 10);
 
       const finalData = {
         marketRegime,
