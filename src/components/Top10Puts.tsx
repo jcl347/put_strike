@@ -56,6 +56,70 @@ const verdictIcons = {
   "AVOID": { icon: "\u2717", color: "text-red-400" },
 };
 
+function CrossComparisonGuide() {
+  return (
+    <div className="bg-gray-900/70 border border-gray-700/50 rounded-lg p-4 mb-4 text-xs space-y-3">
+      <h3 className="text-sm font-medium text-white mb-2">How to Evaluate & Cross-Compare</h3>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <div className="text-blue-400 font-medium mb-1">Score (0-100)</div>
+          <p className="text-gray-400">
+            Composite rank combining premium yield, delta, DTE, liquidity, distance OTM, IV environment, and company stability.
+            <span className="text-white"> Compare scores at similar DTE ranges</span> — a 78 at 31d DTE
+            is not directly comparable to a 78 at 60d DTE since theta decay differs.
+          </p>
+        </div>
+
+        <div>
+          <div className="text-green-400 font-medium mb-1">Premium ($)</div>
+          <p className="text-gray-400">
+            Mid-price per share you collect upfront. Higher premium = more income but usually means closer to the money.
+            <span className="text-white"> Compare premium relative to collateral</span> (strike × 100) — $7.70 on a $360 strike
+            is 2.1% yield vs $15.88 on $760 is also 2.1%.
+          </p>
+        </div>
+
+        <div>
+          <div className="text-green-400 font-medium mb-1">Annualized Return (%)</div>
+          <p className="text-gray-400">
+            Premium yield scaled to 365 days for apples-to-apples comparison across different DTEs.
+            <span className="text-white"> This is the primary cross-comparison metric.</span>
+            {" "}25% annualized at 31d DTE is better risk-adjusted than 25% at 60d DTE (same return, less time at risk).
+          </p>
+        </div>
+
+        <div>
+          <div className="text-yellow-400 font-medium mb-1">Stability (0-100)</div>
+          <p className="text-gray-400">
+            Company quality: market cap (30%), beta (30%), 52-week range position (25%), dividend yield (15%).
+            <span className="text-white"> If assigned, you own this stock.</span>
+            {" "}Stability 85+ = blue-chip, 60-84 = solid, below 60 = speculative.
+          </p>
+        </div>
+
+        <div>
+          <div className="text-gray-300 font-medium mb-1">Delta</div>
+          <p className="text-gray-400">
+            Approximate probability of being assigned (ITM at expiration). -0.20 delta = 80% chance of profit.
+            <span className="text-white"> Lower |delta| = safer but less premium.</span>
+            {" "}Sweet spot: -0.15 to -0.25 (tastytrade/DataDrivenOptions research).
+          </p>
+        </div>
+
+        <div>
+          <div className="text-purple-400 font-medium mb-1">Cross-Comparison Tips</div>
+          <p className="text-gray-400">
+            <span className="text-white">Best trade:</span> highest annualized return + stability &ge;70 + |delta| &le; 0.25.
+            {" "}Watch for traps: high annualized return with low stability or high |delta| means the premium
+            compensates for elevated assignment risk.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Top10Puts({ puts }: Top10PutsProps) {
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [showGuide, setShowGuide] = useState(false);
