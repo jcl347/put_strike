@@ -30,28 +30,6 @@ interface PutSellingWindow {
   riskLevel: "low" | "moderate" | "high";
 }
 
-interface ColabPrediction {
-  predicted_prices?: number[];
-  confidence?: number;
-  model_confidence?: number;
-  model_name?: string;
-  model?: string;
-  model_version?: string;
-  prediction_30d?: number;
-  metadata?: {
-    num_features?: number;
-    architecture?: {
-      d_model?: number;
-      n_layers?: number;
-      n_heads?: number;
-      parameters?: number;
-    };
-    test_directional_accuracy?: number;
-    validation_method?: string;
-    loss_function?: string;
-  };
-}
-
 interface PredictionData {
   symbol: string;
   currentPrice: number;
@@ -64,8 +42,6 @@ interface PredictionData {
   methodology: string;
   featureCount: number;
   featureCategories?: string[];
-  colabPrediction?: ColabPrediction | null;
-  colabStatus?: "connected" | "unavailable" | "not_configured";
 }
 
 interface Props {
@@ -287,96 +263,6 @@ export default function PricePrediction({ prediction: p }: Props) {
         )}
       </div>
 
-      {/* Colab GPU Model Results */}
-      {p.colabPrediction && p.colabStatus === "connected" && (
-        <div className="px-4 py-3 border-b border-gray-700/50">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="w-2 h-2 rounded-full bg-green-400" />
-            <h3 className="text-sm font-medium text-gray-400">
-              iTransformer GPU Prediction
-            </h3>
-            <span className="text-xs text-gray-600">
-              {p.colabPrediction.model ?? p.colabPrediction.model_name ?? "iTransformer"}
-              {p.colabPrediction.model_version ? ` v${p.colabPrediction.model_version}` : ""}
-            </span>
-          </div>
-          <div className="bg-purple-900/20 border border-purple-700/30 rounded-lg p-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-xs text-gray-500">30-Day Prediction</div>
-                {p.colabPrediction.prediction_30d !== undefined ? (
-                  <div className={`text-lg font-bold ${
-                    p.colabPrediction.prediction_30d > 0 ? "text-green-400" :
-                    p.colabPrediction.prediction_30d < 0 ? "text-red-400" : "text-yellow-400"
-                  }`}>
-                    {p.colabPrediction.prediction_30d > 0 ? "+" : ""}
-                    {p.colabPrediction.prediction_30d.toFixed(2)}%
-                  </div>
-                ) : (
-                  <div className="text-white font-bold">
-                    ${p.colabPrediction.predicted_prices?.[p.colabPrediction.predicted_prices.length - 1]?.toFixed(2) ?? "—"}
-                  </div>
-                )}
-              </div>
-              <div className="text-right">
-                {(p.colabPrediction.model_confidence ?? p.colabPrediction.confidence) !== undefined && (
-                  <div>
-                    <div className="text-xs text-gray-500">Dir. Accuracy</div>
-                    <div className="text-purple-400 font-medium">
-                      {(((p.colabPrediction.model_confidence ?? p.colabPrediction.confidence) as number) * 100).toFixed(0)}%
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Model Architecture Details */}
-            {p.colabPrediction.metadata && (
-              <div className="mt-2 grid grid-cols-4 gap-2 text-xs">
-                {p.colabPrediction.metadata.num_features && (
-                  <div className="bg-purple-900/30 rounded px-2 py-1 text-center">
-                    <div className="text-gray-500">Features</div>
-                    <div className="text-purple-300 font-medium">{p.colabPrediction.metadata.num_features}</div>
-                  </div>
-                )}
-                {p.colabPrediction.metadata.architecture?.n_layers && (
-                  <div className="bg-purple-900/30 rounded px-2 py-1 text-center">
-                    <div className="text-gray-500">Layers</div>
-                    <div className="text-purple-300 font-medium">{p.colabPrediction.metadata.architecture.n_layers}</div>
-                  </div>
-                )}
-                {p.colabPrediction.metadata.architecture?.parameters && (
-                  <div className="bg-purple-900/30 rounded px-2 py-1 text-center">
-                    <div className="text-gray-500">Params</div>
-                    <div className="text-purple-300 font-medium">
-                      {p.colabPrediction.metadata.architecture.parameters > 1e6
-                        ? `${(p.colabPrediction.metadata.architecture.parameters / 1e6).toFixed(1)}M`
-                        : `${(p.colabPrediction.metadata.architecture.parameters / 1e3).toFixed(0)}K`}
-                    </div>
-                  </div>
-                )}
-                {p.colabPrediction.metadata.validation_method && (
-                  <div className="bg-purple-900/30 rounded px-2 py-1 text-center">
-                    <div className="text-gray-500">Validation</div>
-                    <div className="text-purple-300 font-medium">{p.colabPrediction.metadata.validation_method}</div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <p className="text-xs text-gray-500 mt-2">
-              ICLR 2024 — Inverted attention across {p.colabPrediction.metadata?.num_features ?? "80+"} feature variates
-              {p.colabPrediction.metadata?.test_directional_accuracy
-                ? ` | Test accuracy: ${p.colabPrediction.metadata.test_directional_accuracy.toFixed(1)}%`
-                : ""}
-              {p.colabPrediction.metadata?.loss_function
-                ? ` | ${p.colabPrediction.metadata.loss_function} loss`
-                : ""}
-            </p>
-          </div>
-        </div>
-      )}
-
       {/* Put Profitability Analysis */}
       <div className="px-4 py-3 border-b border-gray-700/50">
         <h3 className="text-sm font-medium text-gray-400 mb-2">Put Sale Profitability</h3>
@@ -441,7 +327,7 @@ export default function PricePrediction({ prediction: p }: Props) {
           onClick={() => setShowModels(!showModels)}
           className="text-sm font-medium text-gray-400 hover:text-white transition-colors flex items-center gap-1"
         >
-          Model Breakdown ({p.modelSignals.length} models{p.colabStatus === "connected" ? " + GPU" : ""}) {showModels ? "\u25B2" : "\u25BC"}
+          Model Breakdown ({p.modelSignals.length} models) {showModels ? "\u25B2" : "\u25BC"}
         </button>
 
         {showModels && (

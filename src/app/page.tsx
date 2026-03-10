@@ -10,7 +10,7 @@ import Top10Puts from "@/components/Top10Puts";
 import ErrorToast from "@/components/ErrorToast";
 import PutDecisionAssistant from "@/components/PutDecisionAssistant";
 import PricePrediction from "@/components/PricePrediction";
-import ColabConnect from "@/components/ColabConnect";
+import HFModelStatus from "@/components/HFModelStatus";
 import DTESelector, { DEFAULT_DTE, type DTERange } from "@/components/DTESelector";
 import StockForecast from "@/components/StockForecast";
 
@@ -120,7 +120,6 @@ export default function Home() {
   const [screenerData, setScreenerData] = useState<ScreenerData | null>(null);
   const [prediction, setPrediction] = useState<PredictionData | null>(null);
   const [predictionLoading, setPredictionLoading] = useState(false);
-  const [colabUrl, setColabUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [screenLoading, setScreenLoading] = useState(false);
   const [screenProgress, setScreenProgress] = useState<ScreenProgress | null>(null);
@@ -168,8 +167,8 @@ export default function Home() {
       }
       setAnalysis(data as unknown as AnalysisData);
       setDataSourceStatus("connected");
-      // Trigger prediction in background (with Colab URL if connected)
-      fetchPrediction(symbol, colabUrl);
+      // Trigger prediction in background
+      fetchPrediction(symbol);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Analysis failed";
       if (msg.includes("fetch failed") || msg.includes("Failed to fetch")) {
@@ -183,16 +182,13 @@ export default function Home() {
       setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [colabUrl]);
+  }, []);
 
-  // Fetch price prediction for a symbol (with optional Colab GPU inference)
-  const fetchPrediction = useCallback(async (symbol: string, colabEndpoint?: string | null) => {
+  // Fetch price prediction for a symbol
+  const fetchPrediction = useCallback(async (symbol: string) => {
     setPredictionLoading(true);
     try {
-      let url = `/api/predict?symbol=${encodeURIComponent(symbol)}`;
-      if (colabEndpoint) {
-        url += `&colab_url=${encodeURIComponent(colabEndpoint)}`;
-      }
+      const url = `/api/predict?symbol=${encodeURIComponent(symbol)}`;
       const res = await fetch(url);
       const { data } = await safeParseResponse(res);
       if (res.ok && data) {
@@ -487,9 +483,9 @@ export default function Home() {
         </div>
       )}
 
-      {/* Colab Connection + Market Regime */}
+      {/* Model Status + Market Regime */}
       <div className="mb-6 space-y-3">
-        <ColabConnect onUrlChange={setColabUrl} />
+        <HFModelStatus />
         <MarketRegime regime={marketRegime} />
       </div>
 
