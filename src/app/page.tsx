@@ -488,7 +488,8 @@ export default function Home() {
               dividendYield: analysis.quote.dividendYield,
               stabilityScore: analysis.stability?.score ?? 50,
               vix: analysis.marketRegime?.vix ?? 20,
-              context: (analysis as unknown as Record<string, unknown>).context as null,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              context: (analysis as any).context ?? null,
               trailingPE: analysis.quote.trailingPE,
               fiftyTwoWeekLow: analysis.quote.fiftyTwoWeekLow,
               fiftyTwoWeekHigh: analysis.quote.fiftyTwoWeekHigh,
