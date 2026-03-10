@@ -34,7 +34,7 @@ PutStrike is a Next.js 15 app (App Router) that optimizes cash-secured put optio
 
 All routes are `force-dynamic` (no caching — live data).
 
-- **`/api/analyze?symbol=AAPL`** - Deep analysis with stability scoring. Fetches multiple expirations (14-75 DTE window), computes Greeks via Black-Scholes, scores all OTM puts, returns sorted results with HV rank, stability assessment, and market regime.
+- **`/api/analyze?symbol=AAPL`** - Deep analysis with stability scoring and stock context. Fetches multiple expirations (14-75 DTE window), computes Greeks via Black-Scholes, scores all OTM puts, returns sorted results with HV rank, stability assessment, market regime, and stock context (earnings, trend, support/resistance, RSI, ATR).
 
 - **`/api/screen?symbols=AAPL,MSFT`** - Multi-stock screener with batch processing. Defaults to 18 high-liquidity stocks. Returns:
   - `top10`: Global top 10 put sales across all stocks (ranked by combined score)
@@ -52,9 +52,12 @@ Client-side React components with Tailwind CSS (v4). Dark theme only.
 - `SymbolSearch` - Debounced autocomplete with dropdown
 - `MarketRegime` - VIX-based regime indicator (color-coded)
 - `StockQuoteCard` - Quote display with beta, P/E, HV rank visualization
-- `Top10Puts` - Ranked top 10 put sales with expandable details and stability scores
+- `Top10Puts` - Ranked top 10 put sales with expandable details, stability scores, and cross-comparison guide (? button)
+- `PutDecisionAssistant` - Severity-weighted go/no-go checklist (14 rules across 6 categories: Stock Selection, IV Timing, Chart Analysis, Strike Selection, Risk Management). Rules are classified as critical/important/informational to prevent minor flags from overriding safety signals.
+- `PricePrediction` - 6-model statistical ensemble for price forecasting + put timing with color-coded confidence intervals
 - `PutTable` - Expandable table of scored puts with trade details
 - `ScreenerResults` - Multi-stock collapsible results view with stability scores
+- `ColabConnect` - iTransformer GPU model connection for Colab inference
 - Data source status indicator (connected/degraded/down)
 
 ## Key Design Decisions
@@ -73,12 +76,35 @@ Client-side React components with Tailwind CSS (v4). Dark theme only.
 
 ## Research References
 
-- tastytrade: 45 DTE, 16 delta, manage at 50% profit, stop at 2x credit
+- tastytrade: 45 DTE, 16 delta, manage at 50% profit, stop at 2x credit; avoid selling through earnings
 - DataDrivenOptions: 20 delta optimizes theta for short puts
-- Schwab: IV Rank > 30 + IV Percentile > 50 produces 56.8% win rate
+- Schwab: IV Rank > 30 + IV Percentile > 50 produces 56.8% win rate vs 48.2% unfiltered
 - Spintwig: SPY wheel backtests show Sharpe 1.08 vs 0.70 buy-hold
-- CBOE: Lower-beta underlyings have higher put-selling win rates
-- Early Retirement Now: Wheel strategy struggles in prolonged bear markets
+- CBOE: Lower-beta underlyings (≤1.2) have higher put-selling win rates; PUT index data shows VIX 15-25 is optimal
+- Early Retirement Now: Wheel strategy struggles in prolonged bear markets (VIX >35 regime)
+- Schaeffer's Research: Heavy OI at strikes creates support/resistance zones for strike selection
+- Standard TA: RSI 30/70 standard boundaries; for put sellers, RSI >80 = high pullback risk
+
+## Decision Assistant Rule System
+
+The `PutDecisionAssistant` component implements a severity-weighted checklist in `evaluateChecklist()`. Rules have three severity levels:
+
+- **Critical** (Earnings, VIX crisis, Trend, Moving Averages): A single critical fail → CAUTION; two → AVOID
+- **Important** (IV Rank, Beta, Company Quality, Liquidity, Support): Two important fails → CAUTION
+- **Informational** (Dividend, P/E, RSI, Volume, ATR, 52-Week): Provide context but rarely disqualify alone
+
+Key research-backed thresholds:
+- IV Rank: ≥50 pass, 30-49 warn, <30 fail (Schwab 56.8% win rate data)
+- VIX: 15-30 pass, 30-35 warn, ≥35 fail (CBOE PUT index + ERN analysis)
+- Beta: ≤1.2 pass, 1.2-1.5 warn, >1.5 fail (CBOE lower-beta research)
+- RSI: 30-70 pass, 25-30/70-80 warn, <25/>80 fail
+- Earnings: date found + outside window = pass, no date = warn, imminent = fail
+- Dividend: >1.5% pass, all others warn (no fail — quality non-dividend stocks are valid)
+- Volume: 0.5-2x avg = pass, extreme >3x or <0.3x = fail
+- Support: 3-10% below price = pass (useful for strike placement)
+
+To modify thresholds, edit `evaluateChecklist()` in `src/components/PutDecisionAssistant.tsx`.
+To modify verdict logic, edit `getOverallVerdict()` — it uses severity-weighted fail counts.
 
 ## Modifying the Scoring Model
 

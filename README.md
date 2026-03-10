@@ -15,6 +15,8 @@ The scoring model is built on established options research:
 | [Barchart IV Rank vs Percentile](https://www.barchart.com/education/iv_rank_vs_iv_percentile) | Both IV rank and percentile above 50 = historically expensive premiums | Premium environment classification |
 | [The Option Premium - Delta Guide](https://www.theoptionpremium.com/p/how-to-use-delta-when-selling-puts-targeting-the-right-strike-price-like-a-pro) | 0.25-0.35 delta is the balanced risk/reward sweet spot | Default delta targeting |
 | [Early Retirement Now - Wheel Strategy Analysis](https://earlyretirementnow.com/2024/09/17/the-wheel-strategy-doesnt-work-options-series-part-12/) | Prolonged bear markets destroy wheel returns | VIX-based regime detection and CRISIS penalty |
+| [CBOE PUT Index Research](https://www.cboe.com/index/dashboard/put/) | Lower-beta underlyings have higher put-selling win rates | Beta thresholds in decision checklist |
+| [Schaeffer's Research](https://www.schaeffersresearch.com/education/expectational-analysis/technical-analysis/options-related-support-and-resistance) | Heavy OI at strikes creates support/resistance zones | Support-level-based strike selection |
 
 ### Why a Scoring Model Instead of ML
 
@@ -56,6 +58,46 @@ A market regime modifier is applied based on VIX:
 | 40-54 | NEUTRAL | Mixed signals, proceed with caution |
 | <40 | AVOID | One or more critical factors unfavorable |
 
+## Decision Assistant (Go/No-Go Checklist)
+
+A severity-weighted checklist that evaluates 14 rules across 6 categories before recommending a put sale. Rules are classified by severity to prevent minor informational flags from overriding critical safety signals.
+
+### Rule Categories & Severity
+
+| Category | Rule | Severity | Pass | Warn | Fail | Source |
+|----------|------|----------|------|------|------|--------|
+| **Stock Selection** | Company Quality | important | Stability ≥60 | 40-59 | <40 | Composite model |
+| | Liquidity | important | Cap >$50B | $10-50B | <$10B | Market cap proxy |
+| | Earnings Clear | **critical** | Date found, outside window | No date found | Earnings imminent | tastytrade |
+| **IV Timing** | IV Rank (HV proxy) | important | ≥50% | 30-49% | <30% | Schwab (56.8% win rate) |
+| | VIX Environment | **critical** | 15-30 | <15 or 30-35 | ≥35 | CBOE PUT index, ERN |
+| **Chart Analysis** | Trend Direction | **critical** | Uptrend | Sideways | Downtrend | Technical analysis |
+| | Moving Averages | **critical** | Above SMA50+200 | Above SMA200 only | Below SMA200 | Standard TA |
+| | RSI(14) | informational | 30-70 | 25-30 or 70-80 | <25 or >80 | Standard TA |
+| | Volume Activity | informational | 0.5-2x avg | 0.3-0.5x or 2-3x | <0.3x or >3x | Liquidity research |
+| **Strike Selection** | Support Level | important | 3-10% below | <3% or >10% | — | Schaeffer's Research |
+| **Risk Management** | Beta | important | ≤1.2 | 1.2-1.5 | >1.5 | CBOE research |
+| | Dividend Cushion | informational | >1.5% | 0-1.5% or none | — | Assignment cushion |
+| | Valuation (P/E) | informational | ≤25 | 25-40 | >40 | S&P 500 avg ~22 |
+| | 52-Week Position | informational | 30-80% | 20-30% or >80% | <20% | Momentum persistence |
+| | Daily Volatility (ATR) | informational | ≤2% | 2-3.5% | >3.5% | Strike width guidance |
+
+### Verdict Logic
+
+Verdicts are severity-weighted — a critical fail (e.g., downtrend, earnings) carries more weight than an informational one (e.g., no dividend):
+
+- **AVOID**: 2+ critical fails, or 1 critical + 2 important, or 4+ total fails
+- **CAUTION**: 1 critical fail, or 2+ important fails, or 2+ total fails, or pass rate <55%
+- **SELL PUT**: All checks pass or only minor informational warnings
+
+### How to Cross-Compare (Top 10 Puts)
+
+The Top 10 table includes a **"?"** guide button explaining how to evaluate and compare entries:
+- **Annualized Return** is the primary cross-comparison metric (normalizes for DTE)
+- Compare premium relative to collateral, not absolute dollars
+- Best trades: highest annualized return + stability ≥70 + |delta| ≤ 0.25
+- Watch for traps: high return with low stability or high |delta| = risky premium
+
 ## Architecture
 
 ```
@@ -65,20 +107,26 @@ src/
     scoring.ts          # Multi-factor scoring engine
     yahoo-finance.ts    # Live data provider (yahoo-finance2)
     __tests__/
-      scoring.test.ts   # 24 validation tests
+      scoring.test.ts   # 31 validation tests
   app/
     page.tsx            # Main UI with search, analysis, screener
     api/
-      analyze/route.ts  # Deep single-stock analysis
+      analyze/route.ts  # Deep single-stock analysis (with stock context)
       screen/route.ts   # Multi-stock screener (top 18 liquid stocks)
+      screen-single/    # Per-stock screener with context
+      predict/route.ts  # Price prediction ensemble (6 models)
       options/route.ts  # Raw options chain data
       search/route.ts   # Symbol search autocomplete
   components/
-    SymbolSearch.tsx     # Autocomplete stock search
-    MarketRegime.tsx     # VIX regime indicator
-    StockQuoteCard.tsx   # Quote + volatility display
-    PutTable.tsx         # Scored puts with expandable details
-    ScreenerResults.tsx  # Multi-stock results grid
+    SymbolSearch.tsx           # Autocomplete stock search
+    MarketRegime.tsx           # VIX regime indicator
+    StockQuoteCard.tsx         # Quote + volatility display
+    Top10Puts.tsx              # Ranked top 10 with cross-comparison guide
+    PutTable.tsx               # Scored puts with expandable details
+    PutDecisionAssistant.tsx   # Severity-weighted go/no-go checklist (14 rules)
+    PricePrediction.tsx        # 6-model ensemble price forecast + put timing
+    ScreenerResults.tsx        # Multi-stock results grid
+    ColabConnect.tsx           # iTransformer GPU model connection
 ```
 
 ## Data Sources
