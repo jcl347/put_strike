@@ -12,7 +12,7 @@
 
 // HuggingFace repo ID — set via env var or default
 const HF_REPO_ID =
-  process.env.NEXT_PUBLIC_HF_REPO_ID || "putstrike/itransformer";
+  process.env.NEXT_PUBLIC_HF_REPO_ID || "jcl347/putstrike";
 
 const HF_BASE = `https://huggingface.co/${HF_REPO_ID}/resolve/main`;
 

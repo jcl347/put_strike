@@ -205,7 +205,7 @@ For Long/Extended horizons beyond 60 trading days, confidence bands widen propor
 
 **Repository structure on HF Hub:**
 ```
-username/putstrike-itransformer/
+jcl347/putstrike/
 ├── model.onnx              # ONNX model (~2-5MB)
 ├── config.json             # Model config (dims, features, horizons)
 ├── feature_names.json      # Ordered feature list (must match website)
