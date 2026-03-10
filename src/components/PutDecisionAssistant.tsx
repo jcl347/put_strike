@@ -12,6 +12,9 @@ interface Props {
   data: ChecklistInput;
 }
 
+// ─── Severity-Weighted Verdict ──────────────────────────────────
+// Not all rules are equal. A downtrend fail is far more dangerous than a missing dividend.
+// Critical fails trigger CAUTION at minimum, and AVOID with compounding failures.
 function getOverallVerdict(items: ChecklistItem[]): {
   verdict: "SELL PUT" | "CAUTION" | "AVOID";
   color: string;

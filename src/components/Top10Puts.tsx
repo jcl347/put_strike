@@ -58,19 +58,31 @@ const verdictIcons = {
 
 export default function Top10Puts({ puts }: Top10PutsProps) {
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
+  const [showGuide, setShowGuide] = useState(false);
 
   if (puts.length === 0) return null;
 
   return (
     <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-white">
-          Top 10 Put Sales Today
-        </h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-semibold text-white">
+            Top 10 Put Sales Today
+          </h2>
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowGuide(!showGuide); }}
+            className="w-5 h-5 rounded-full bg-gray-700 hover:bg-gray-600 text-gray-400 hover:text-white text-xs flex items-center justify-center transition-colors"
+            title="How to evaluate these numbers"
+          >
+            ?
+          </button>
+        </div>
         <span className="text-xs text-gray-500">
           Ranked by option quality + company stability + checklist
         </span>
       </div>
+
+      {showGuide && <CrossComparisonGuide />}
 
       <div className="space-y-1">
         {puts.map((put, i) => {
