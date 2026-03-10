@@ -23,7 +23,8 @@ export const maxDuration = 30;
 /**
  * Price prediction endpoint.
  * Computes 300+ features and runs ensemble prediction models.
- * If a Colab GPU inference endpoint is configured, also calls that.
+ * iTransformer (HuggingFace ONNX) runs client-side in the browser via onnxruntime-web.
+ * Falls back to Colab GPU if colab_url is configured.
  *
  * GET /api/predict?symbol=AAPL&colab_url=https://xxxx.ngrok.io
  */
@@ -121,7 +122,8 @@ export async function GET(request: NextRequest) {
       context?.trendDirection ?? "sideways",
     );
 
-    // Try Colab iTransformer inference if URL is configured
+    // iTransformer (HuggingFace ONNX) runs client-side via onnxruntime-web.
+    // Server-side: only Colab GPU inference if configured.
     let colabPrediction: any = null;
     let colabStatus: "connected" | "unavailable" | "not_configured" = "not_configured";
 
@@ -163,7 +165,7 @@ export async function GET(request: NextRequest) {
       context,
       quote,
       hv,
-      // Colab integration
+      // Colab GPU inference (optional — iTransformer HF runs client-side)
       colabPrediction,
       colabStatus,
     });
