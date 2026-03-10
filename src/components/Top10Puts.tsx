@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { getChecklistSummary, type ChecklistInput, type StockContext } from "@/lib/checklist";
 
 interface Top10Put {
@@ -56,6 +56,39 @@ const verdictIcons = {
   "AVOID": { icon: "\u2717", color: "text-red-400" },
 };
 
+function ReadingGuide() {
+  return (
+    <div className="bg-gray-900/60 border border-gray-700/50 rounded-lg p-4 mb-4 text-xs">
+      <h3 className="text-sm font-medium text-white mb-2">How to Read This Table</h3>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-2 text-gray-400">
+        <div>
+          <span className="text-blue-400 font-medium">Score (0-100):</span>{" "}
+          Composite rank combining premium yield, delta quality, DTE, liquidity, distance OTM, IV rank, and company stability.
+          Higher = better risk-adjusted opportunity.{" "}
+          <span className="text-white">75+ is strong, 55-74 is good, below 55 is marginal.</span>
+        </div>
+        <div>
+          <span className="text-green-400 font-medium">Premium & Annualized %:</span>{" "}
+          Cash you collect per share upfront. Annualized return normalizes across different DTEs for direct comparison.
+          {" "}<span className="text-white">Compare annualized return, not raw premium.</span>
+        </div>
+        <div>
+          <span className="text-yellow-400 font-medium">Stability & Delta:</span>{" "}
+          Stability (0-100) rates the company as a stock you&apos;d want to own if assigned.
+          Delta is your approximate probability of assignment.{" "}
+          <span className="text-white">Sweet spot: stability 70+, |delta| 0.15-0.25.</span>
+        </div>
+      </div>
+      <div className="mt-2 pt-2 border-t border-gray-700/30 text-gray-500">
+        <span className="text-purple-400 font-medium">Best pick:</span>{" "}
+        One entry per stock showing its highest-scoring put. The best trade balances high annualized return + high stability + moderate delta.
+        Flags show IV rank, trend, and market conditions at a glance.
+        Click any row to expand full trade details and scoring breakdown.
+      </div>
+    </div>
+  );
+}
+
 function CrossComparisonGuide() {
   return (
     <div className="bg-gray-900/70 border border-gray-700/50 rounded-lg p-4 mb-4 text-xs space-y-3">
@@ -75,7 +108,7 @@ function CrossComparisonGuide() {
           <div className="text-green-400 font-medium mb-1">Premium ($)</div>
           <p className="text-gray-400">
             Mid-price per share you collect upfront. Higher premium = more income but usually means closer to the money.
-            <span className="text-white"> Compare premium relative to collateral</span> (strike × 100) — $7.70 on a $360 strike
+            <span className="text-white"> Compare premium relative to collateral</span> (strike x 100) — $7.70 on a $360 strike
             is 2.1% yield vs $15.88 on $760 is also 2.1%.
           </p>
         </div>
@@ -124,11 +157,25 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [showGuide, setShowGuide] = useState(false);
 
-  if (puts.length === 0) return null;
+  // Select the BEST put per stock (highest score), then take top 10 stocks
+  const bestPerStock = useMemo(() => {
+    const stockMap = new Map<string, Top10Put>();
+    for (const put of puts) {
+      const existing = stockMap.get(put.symbol);
+      if (!existing || put.score > existing.score) {
+        stockMap.set(put.symbol, put);
+      }
+    }
+    return Array.from(stockMap.values())
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
+  }, [puts]);
+
+  if (bestPerStock.length === 0) return null;
 
   return (
     <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <h2 className="text-lg font-semibold text-white">
             Top 10 Put Sales Today
@@ -142,14 +189,17 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
           </button>
         </div>
         <span className="text-xs text-gray-500">
-          Ranked by option quality + company stability + checklist
+          Best put per stock, ranked by score
         </span>
       </div>
+
+      {/* Always show the reading guide */}
+      <ReadingGuide />
 
       {showGuide && <CrossComparisonGuide />}
 
       <div className="space-y-1">
-        {puts.map((put, i) => {
+        {bestPerStock.map((put, i) => {
           const colors = recColors[put.recommendation] ?? recColors.NEUTRAL;
           const isExpanded = expandedRow === i;
           const midPrice = (put.bid + put.ask) / 2;
@@ -182,10 +232,10 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
                   </span>
                 </div>
 
-                {/* Score */}
-                <div className="w-14">
+                {/* Score — prominent */}
+                <div className="w-16">
                   <div
-                    className={`text-xl font-bold ${
+                    className={`text-2xl font-bold ${
                       put.score >= 75
                         ? "text-green-400"
                         : put.score >= 55
@@ -195,6 +245,7 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
                   >
                     {put.score.toFixed(0)}
                   </div>
+                  <div className="text-[10px] text-gray-600">score</div>
                 </div>
 
                 {/* Symbol & Company + checklist verdict */}
@@ -284,9 +335,12 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
                   <div className="text-gray-500 text-xs">stability</div>
                 </div>
 
-                {/* Delta */}
-                <div className="w-16 text-sm text-gray-400 hidden md:block">
-                  {put.delta.toFixed(3)}
+                {/* Delta — properly formatted */}
+                <div className="w-16 text-sm hidden md:block">
+                  <div className="text-gray-400">
+                    {put.delta < 0 ? "" : "-"}{Math.abs(put.delta).toFixed(2)}
+                  </div>
+                  <div className="text-gray-600 text-[10px]">delta</div>
                 </div>
 
                 {/* Expand */}
@@ -361,6 +415,12 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
                           <span className="text-gray-400">Distance OTM</span>
                           <span className="text-white">
                             {put.distanceOTM.toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Delta</span>
+                          <span className="text-white">
+                            {put.delta.toFixed(3)}
                           </span>
                         </div>
                         <div className="flex justify-between">
