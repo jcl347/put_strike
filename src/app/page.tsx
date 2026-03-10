@@ -298,6 +298,7 @@ export default function Home() {
       });
 
       // Build global top 10 picks across all stocks
+      // Include checklist context for inline flag display
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const allScoredPuts: any[] = [];
       for (const stock of successfulResults) {
@@ -306,6 +307,22 @@ export default function Home() {
             ...put,
             stabilityScore: stock.stability?.score ?? 0,
             companyName: stock.quote?.name ?? stock.symbol,
+            _checklistInput: {
+              symbol: stock.symbol,
+              price: stock.quote?.price ?? 0,
+              ivRank: stock.ivRank ?? 50,
+              beta: stock.quote?.beta ?? 1,
+              marketCap: stock.quote?.marketCap ?? 0,
+              dividendYield: stock.quote?.dividendYield ?? 0,
+              stabilityScore: stock.stability?.score ?? 50,
+              vix: vix ?? 20,
+              context: stock.context ?? null,
+              trailingPE: stock.quote?.trailingPE,
+              fiftyTwoWeekLow: stock.quote?.fiftyTwoWeekLow,
+              fiftyTwoWeekHigh: stock.quote?.fiftyTwoWeekHigh,
+              volume: stock.quote?.volume,
+              avgVolume: stock.quote?.avgVolume,
+            },
           });
         }
       }
@@ -638,6 +655,7 @@ export default function Home() {
             loading={screenLoading}
             progress={screenProgress}
             onAnalyze={analyzeSymbol}
+            globalVix={screenerData?.marketRegime?.vix ?? 20}
           />
         </div>
       )}

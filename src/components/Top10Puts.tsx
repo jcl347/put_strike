@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { getChecklistSummary, type ChecklistInput, type StockContext } from "@/lib/checklist";
 
 interface Top10Put {
   symbol: string;
@@ -21,6 +22,8 @@ interface Top10Put {
   openInterest: number;
   recommendation: string;
   signals: { name: string; value: string; sentiment: string; weight: number }[];
+  // Checklist context (passed through from screener)
+  _checklistInput?: ChecklistInput;
 }
 
 interface Top10PutsProps {
@@ -41,69 +44,17 @@ const recLabels: Record<string, string> = {
   AVOID: "Avoid",
 };
 
-function CrossComparisonGuide() {
-  return (
-    <div className="bg-gray-900/70 border border-gray-700/50 rounded-lg p-4 mb-4 text-xs space-y-3">
-      <h3 className="text-sm font-medium text-white mb-2">How to Evaluate & Cross-Compare</h3>
+const flagColors = {
+  pass: "bg-green-900/40 text-green-400 border-green-700/30",
+  warn: "bg-yellow-900/40 text-yellow-400 border-yellow-700/30",
+  fail: "bg-red-900/40 text-red-400 border-red-700/30",
+};
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div>
-          <div className="text-blue-400 font-medium mb-1">Score (0-100)</div>
-          <p className="text-gray-400">
-            Composite rank combining premium yield, delta, DTE, liquidity, distance OTM, IV environment, and company stability.
-            <span className="text-white"> Compare scores at similar DTE ranges</span> — a 78 at 31d DTE
-            is not directly comparable to a 78 at 60d DTE since theta decay differs.
-          </p>
-        </div>
-
-        <div>
-          <div className="text-green-400 font-medium mb-1">Premium ($)</div>
-          <p className="text-gray-400">
-            Mid-price per share you collect upfront. Higher premium = more income but usually means closer to the money.
-            <span className="text-white"> Compare premium relative to collateral</span> (strike × 100) — $7.70 on a $360 strike
-            is 2.1% yield vs $15.88 on $760 is also 2.1%.
-          </p>
-        </div>
-
-        <div>
-          <div className="text-green-400 font-medium mb-1">Annualized Return (%)</div>
-          <p className="text-gray-400">
-            Premium yield scaled to 365 days for apples-to-apples comparison across different DTEs.
-            <span className="text-white"> This is the primary cross-comparison metric.</span>
-            {" "}25% annualized at 31d DTE is better risk-adjusted than 25% at 60d DTE (same return, less time at risk).
-          </p>
-        </div>
-
-        <div>
-          <div className="text-yellow-400 font-medium mb-1">Stability (0-100)</div>
-          <p className="text-gray-400">
-            Company quality: market cap (30%), beta (30%), 52-week range position (25%), dividend yield (15%).
-            <span className="text-white"> If assigned, you own this stock.</span>
-            {" "}Stability 85+ = blue-chip, 60-84 = solid, below 60 = speculative.
-          </p>
-        </div>
-
-        <div>
-          <div className="text-gray-300 font-medium mb-1">Delta</div>
-          <p className="text-gray-400">
-            Approximate probability of being assigned (ITM at expiration). -0.20 delta ≈ 80% chance of profit.
-            <span className="text-white"> Lower |delta| = safer but less premium.</span>
-            {" "}Sweet spot: -0.15 to -0.25 (tastytrade/DataDrivenOptions research).
-          </p>
-        </div>
-
-        <div>
-          <div className="text-purple-400 font-medium mb-1">Cross-Comparison Tips</div>
-          <p className="text-gray-400">
-            <span className="text-white">Best trade:</span> highest annualized return + stability ≥70 + |delta| ≤ 0.25.
-            {" "}Watch for traps: high annualized return with low stability or high |delta| means the premium
-            compensates for elevated assignment risk.
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
+const verdictIcons = {
+  "SELL PUT": { icon: "\u2713", color: "text-green-400" },
+  "CAUTION": { icon: "!", color: "text-yellow-400" },
+  "AVOID": { icon: "\u2717", color: "text-red-400" },
+};
 
 export default function Top10Puts({ puts }: Top10PutsProps) {
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
@@ -138,6 +89,11 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
           const colors = recColors[put.recommendation] ?? recColors.NEUTRAL;
           const isExpanded = expandedRow === i;
           const midPrice = (put.bid + put.ask) / 2;
+
+          // Evaluate checklist if context is available
+          const summary = put._checklistInput
+            ? getChecklistSummary(put._checklistInput)
+            : null;
 
           return (
             <div
@@ -177,9 +133,16 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
                   </div>
                 </div>
 
-                {/* Symbol & Company */}
-                <div className="w-32 min-w-0">
-                  <div className="text-white font-bold">{put.symbol}</div>
+                {/* Symbol & Company + checklist verdict */}
+                <div className="w-36 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-white font-bold">{put.symbol}</span>
+                    {summary && (
+                      <span className={`text-xs font-bold ${verdictIcons[summary.verdict].color}`} title={`${summary.passes}/${summary.items.length} checks pass`}>
+                        {verdictIcons[summary.verdict].icon}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-xs text-gray-500 truncate">
                     {put.companyName}
                   </div>
@@ -192,6 +155,21 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
                   >
                     {recLabels[put.recommendation] ?? put.recommendation}
                   </span>
+                </div>
+
+                {/* Key checklist flags */}
+                <div className="w-40 hidden lg:flex items-center gap-1 flex-wrap">
+                  {summary?.flags.slice(0, 3).map((flag, fi) => (
+                    <span
+                      key={fi}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${flagColors[flag.status]}`}
+                    >
+                      {flag.short}
+                    </span>
+                  ))}
+                  {!summary && (
+                    <span className="text-[10px] text-gray-600">No context</span>
+                  )}
                 </div>
 
                 {/* Strike & Exp */}
@@ -249,13 +227,41 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
 
                 {/* Expand */}
                 <div className="w-6 text-gray-500 text-sm ml-auto">
-                  {isExpanded ? "▲" : "▼"}
+                  {isExpanded ? "\u25B2" : "\u25BC"}
                 </div>
               </div>
 
               {/* Expanded details */}
               {isExpanded && (
                 <div className="px-4 pb-4 pt-1 border-t border-gray-700/50">
+                  {/* Checklist summary when expanded */}
+                  {summary && (
+                    <div className="mb-3 p-2 bg-gray-900/50 rounded-lg border border-gray-700/50">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className={`font-bold text-sm ${verdictIcons[summary.verdict].color}`}>
+                          {summary.verdict}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          {summary.passes} pass, {summary.warns} caution, {summary.fails} fail
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-1.5">
+                        {summary.items.map((item, idx) => (
+                          <div key={idx} className="flex items-center gap-1.5 text-xs">
+                            <span className={`font-bold ${
+                              item.status === "pass" ? "text-green-400" :
+                              item.status === "warn" ? "text-yellow-400" : "text-red-400"
+                            }`}>
+                              {item.status === "pass" ? "\u2713" : item.status === "warn" ? "!" : "\u2717"}
+                            </span>
+                            <span className="text-gray-300">{item.label}</span>
+                            <span className="text-gray-600 truncate">{item.detail}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     {/* Trade Details */}
                     <div>
