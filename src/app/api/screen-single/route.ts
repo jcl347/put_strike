@@ -88,8 +88,8 @@ export async function GET(request: NextRequest) {
       return dte >= fetchMinDte && dte <= fetchMaxDte;
     });
 
-    // Fetch additional expirations (more for wider DTE ranges)
-    const maxExpirations = maxDte > 75 ? 4 : 3;
+    // Fetch additional expirations to cover the full 1-120d DTE range
+    const maxExpirations = 8;
     const expirationsToFetch = relevantExpirations.slice(0, maxExpirations);
     const additionalChains = await Promise.allSettled(
       expirationsToFetch.map((exp) => getOptionsChain(upperSymbol, exp))
@@ -163,7 +163,7 @@ export async function GET(request: NextRequest) {
     }
 
     const ivRank = hv.hvRank;
-    const scored = rankPuts(candidates, ivRank, marketRegime, 8, companyStability);
+    const scored = rankPuts(candidates, ivRank, marketRegime, 20, companyStability);
 
     return NextResponse.json({
       symbol: upperSymbol,

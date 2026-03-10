@@ -173,9 +173,8 @@ export default function Home() {
       }
       setAnalysis(data as unknown as AnalysisData);
       setDataSourceStatus("connected");
-      // Trigger prediction + iTransformer forecast in background
+      // Trigger prediction in background
       fetchPrediction(symbol);
-      fetchSingleForecast(symbol, (data as any).quote?.price ?? 0);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Analysis failed";
       if (msg.includes("fetch failed") || msg.includes("Failed to fetch")) {
@@ -474,14 +473,6 @@ export default function Home() {
     })).filter((stock: any) => stock.topPuts.length > 0);
   }, [screenerData?.results, dteRange]);
 
-  // Count for DTE filter badge
-  const totalUnfilteredPuts = activeTab === "analyze"
-    ? (analysis?.scoredPuts?.length ?? 0)
-    : (screenerData?.top10?.length ?? 0);
-  const totalFilteredPuts = activeTab === "analyze"
-    ? filteredAnalysisPuts.length
-    : filteredTop10.length;
-
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
       {/* Header */}
@@ -583,23 +574,6 @@ export default function Home() {
         <div className="text-center py-16">
           <div className="w-10 h-10 border-2 border-gray-600 border-t-blue-400 rounded-full animate-spin mx-auto mb-4" />
           <p className="text-gray-400">Fetching live options data and computing scores...</p>
-        </div>
-      )}
-
-      {/* DTE Filter — shown when results are available */}
-      {((activeTab === "analyze" && analysis && !loading) ||
-        (activeTab === "screen" && (screenerData || screenLoading))) && (
-        <div className="mb-4">
-          <div className="flex items-center gap-3">
-            <DTESelector selected={dteRange} onChange={setDteRange} />
-            {totalUnfilteredPuts > 0 && !loading && !screenLoading && (
-              <span className="text-xs text-gray-500 whitespace-nowrap">
-                {totalFilteredPuts === totalUnfilteredPuts
-                  ? `${totalFilteredPuts} puts`
-                  : `${totalFilteredPuts} of ${totalUnfilteredPuts} puts`}
-              </span>
-            )}
-          </div>
         </div>
       )}
 
@@ -714,6 +688,18 @@ export default function Home() {
             </div>
           )}
 
+          {/* DTE Filter — directly above puts table */}
+          <div className="flex items-center gap-3">
+            <DTESelector selected={dteRange} onChange={setDteRange} />
+            {analysis.scoredPuts.length > 0 && (
+              <span className="text-xs text-gray-500 whitespace-nowrap">
+                {filteredAnalysisPuts.length === analysis.scoredPuts.length
+                  ? `${filteredAnalysisPuts.length} puts`
+                  : `${filteredAnalysisPuts.length} of ${analysis.scoredPuts.length} puts`}
+              </span>
+            )}
+          </div>
+
           <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
             <PutTable
               puts={filteredAnalysisPuts}
@@ -769,6 +755,20 @@ export default function Home() {
       {/* Screener Results */}
       {activeTab === "screen" && (
         <div className="space-y-6">
+          {/* DTE Filter — shown once screener has data or is loading */}
+          {(screenerData || screenLoading) && (
+            <div className="flex items-center gap-3">
+              <DTESelector selected={dteRange} onChange={setDteRange} />
+              {screenerData?.top10?.length > 0 && !screenLoading && (
+                <span className="text-xs text-gray-500 whitespace-nowrap">
+                  {filteredTop10.length === screenerData.top10.length
+                    ? `${filteredTop10.length} top puts`
+                    : `${filteredTop10.length} of ${screenerData.top10.length} top puts`}
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Top 10 Picks — filtered by DTE */}
           {filteredTop10.length > 0 && !screenLoading && (
             <Top10Puts puts={filteredTop10} />

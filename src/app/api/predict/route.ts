@@ -24,18 +24,14 @@ export const maxDuration = 30;
  * Price prediction endpoint.
  * Computes 300+ features and runs ensemble prediction models.
  * iTransformer (HuggingFace ONNX) runs client-side in the browser via onnxruntime-web.
- * Falls back to Colab GPU if colab_url is configured.
  *
- * GET /api/predict?symbol=AAPL&colab_url=https://xxxx.ngrok.io
+ * GET /api/predict?symbol=AAPL
  */
 export async function GET(request: NextRequest) {
   const symbol = request.nextUrl.searchParams.get("symbol");
   if (!symbol) {
     return NextResponse.json({ error: "Symbol is required" }, { status: 400 });
   }
-
-  // Optional: Colab inference server URL (from user settings)
-  const colabUrl = request.nextUrl.searchParams.get("colab_url");
 
   const upperSymbol = symbol.toUpperCase();
 
@@ -123,40 +119,7 @@ export async function GET(request: NextRequest) {
     );
 
     // iTransformer (HuggingFace ONNX) runs client-side via onnxruntime-web.
-    // Server-side: only Colab GPU inference if configured.
-    let colabPrediction: any = null;
-    let colabStatus: "connected" | "unavailable" | "not_configured" = "not_configured";
-
-    if (colabUrl) {
-      try {
-        // Send all available OHLCV data to Colab — it computes features server-side
-        // The iTransformer server needs enough history for feature computation (200+ days ideal)
-        // Send up to 300 days so the server can compute 200-day SMAs and other long-lookback features
-        const colabPayload = {
-          symbol: upperSymbol,
-          current_price: quote.price,
-          features: historyResult.slice(-300).map(d => [
-            d.open, d.high, d.low, d.close, d.volume,
-          ]),
-        };
-
-        const colabRes = await fetch(`${colabUrl}/predict`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
-          body: JSON.stringify(colabPayload),
-          signal: AbortSignal.timeout(15000), // 15s timeout (feature computation takes time)
-        });
-
-        if (colabRes.ok) {
-          colabPrediction = await colabRes.json();
-          colabStatus = "connected";
-        } else {
-          colabStatus = "unavailable";
-        }
-      } catch {
-        colabStatus = "unavailable";
-      }
-    }
+    // No server-side ML inference needed.
 
     return NextResponse.json({
       ...prediction,
@@ -165,9 +128,6 @@ export async function GET(request: NextRequest) {
       context,
       quote,
       hv,
-      // Colab GPU inference (optional — iTransformer HF runs client-side)
-      colabPrediction,
-      colabStatus,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Prediction failed";

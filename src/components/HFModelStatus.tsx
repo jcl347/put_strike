@@ -1,86 +1,114 @@
 "use client";
 
-/**
- * HFModelStatus — Shows connection status to the HuggingFace iTransformer model.
- * Replaces the old ColabConnect component.
- */
-
 import { useState, useEffect } from "react";
 
-const HF_REPO_ID = process.env.NEXT_PUBLIC_HF_REPO_ID || "jcl347/putstrike";
-
 interface ModelInfo {
-  num_features: number;
-  forecast_horizon: number;
-  architecture?: { type: string; parameters: number };
-  training?: { num_stocks: number; best_val_loss: number };
+  status: "loading" | "connected" | "unavailable";
+  numFeatures?: number;
+  parameters?: number;
+  dirAcc30d?: number;
+  onnxSizeMb?: number;
+  numStocks?: number;
 }
 
 export default function HFModelStatus() {
-  const [status, setStatus] = useState<"checking" | "connected" | "unavailable">("checking");
-  const [info, setInfo] = useState<ModelInfo | null>(null);
+  const [info, setInfo] = useState<ModelInfo>({ status: "loading" });
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
-    const check = async () => {
-      try {
-        const res = await fetch(
-          `https://huggingface.co/${HF_REPO_ID}/resolve/main/model_config.json`,
-          { signal: AbortSignal.timeout(6000) }
-        );
-        if (!res.ok) {
-          setStatus("unavailable");
-          return;
-        }
+    // Try loading the model config from HuggingFace to check availability
+    const repoId = process.env.NEXT_PUBLIC_HF_REPO_ID || "jcl347/putstrike";
+    const configUrl = `https://huggingface.co/${repoId}/resolve/main/model_config.json`;
+
+    fetch(configUrl, { signal: AbortSignal.timeout(8000) })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const config = await res.json();
         setInfo({
-          num_features: config.num_features,
-          forecast_horizon: config.forecast_horizon,
-          architecture: config.architecture,
-          training: config.training,
+          status: "connected",
+          numFeatures: config.num_features,
+          parameters: config.architecture?.parameters,
+          dirAcc30d: config.test_metrics?.dir_acc_30d,
+          onnxSizeMb: config.onnx_size_mb,
+          numStocks: config.training?.num_stocks,
         });
-        setStatus("connected");
-      } catch {
-        setStatus("unavailable");
-      }
-    };
-    check();
+      })
+      .catch(() => {
+        setInfo({ status: "unavailable" });
+      });
   }, []);
 
-  if (status === "checking") {
-    return (
-      <div className="flex items-center gap-2 text-xs text-gray-500">
-        <span className="w-2 h-2 rounded-full bg-gray-500 animate-pulse" />
-        Checking iTransformer model...
-      </div>
-    );
-  }
-
-  if (status === "unavailable") {
-    return (
-      <div className="flex items-center gap-2 text-xs text-gray-500">
-        <span className="w-2 h-2 rounded-full bg-gray-600" />
-        iTransformer: Not available
-      </div>
-    );
-  }
-
-  const params = info?.architecture?.parameters;
-  const paramStr = params ? `${(params / 1000).toFixed(0)}K params` : "";
-  const stocks = info?.training?.num_stocks;
+  const statusIndicator = {
+    loading: { color: "bg-yellow-400 animate-pulse", text: "Checking model..." },
+    connected: { color: "bg-green-400", text: "iTransformer ONNX — Connected" },
+    unavailable: { color: "bg-gray-500", text: "iTransformer — Model not deployed yet" },
+  }[info.status];
 
   return (
-    <div className="flex items-center gap-2 text-xs text-green-400">
-      <span className="w-2 h-2 rounded-full bg-green-400" />
-      <span>
-        iTransformer: Connected
-        {info && (
-          <span className="text-gray-500 ml-1">
-            &mdash; {info.num_features} features, {info.forecast_horizon}d horizon
-            {paramStr && `, ${paramStr}`}
-            {stocks && `, ${stocks} stocks`}
-          </span>
-        )}
-      </span>
+    <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full px-4 py-2.5 flex items-center justify-between hover:bg-gray-700/30 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${statusIndicator.color}`} />
+          <span className="text-sm text-gray-300">ML Inference (HuggingFace)</span>
+          <span className="text-xs text-gray-500">{statusIndicator.text}</span>
+        </div>
+        <span className="text-gray-500 text-xs">{expanded ? "\u25B2" : "\u25BC"}</span>
+      </button>
+
+      {expanded && (
+        <div className="px-4 pb-3 border-t border-gray-700/50 pt-3 space-y-3">
+          {info.status === "connected" && (
+            <div className="text-xs text-green-400 bg-green-900/20 border border-green-700/30 rounded px-3 py-2">
+              <div className="font-medium mb-1">
+                iTransformer (ICLR 2024) loaded from HuggingFace Hub
+              </div>
+              <div className="flex flex-wrap gap-3 text-green-500">
+                {info.numFeatures && <span>{info.numFeatures} features</span>}
+                {info.parameters && (
+                  <span>
+                    {info.parameters > 1e6
+                      ? `${(info.parameters / 1e6).toFixed(1)}M params`
+                      : `${(info.parameters / 1e3).toFixed(0)}K params`}
+                  </span>
+                )}
+                {info.dirAcc30d && <span>{info.dirAcc30d.toFixed(1)}% dir. accuracy (30d)</span>}
+                {info.numStocks && <span>Trained on {info.numStocks} stocks</span>}
+                {info.onnxSizeMb && <span>{info.onnxSizeMb.toFixed(1)} MB ONNX</span>}
+              </div>
+              <p className="text-green-600 mt-1">
+                Runs in-browser via onnxruntime-web (WASM). No GPU or server needed.
+              </p>
+            </div>
+          )}
+
+          {info.status === "unavailable" && (
+            <div className="text-xs text-gray-400 bg-gray-900/50 border border-gray-700/30 rounded px-3 py-2">
+              <p className="mb-1">
+                No ONNX model found on HuggingFace Hub. Statistical ensemble predictions are still available.
+              </p>
+              <p className="text-gray-500">
+                To deploy: run <code className="text-gray-400">colab/train_itransformer.ipynb</code> in
+                Google Colab to train and push the model to HuggingFace.
+              </p>
+            </div>
+          )}
+
+          {info.status === "loading" && (
+            <div className="text-xs text-gray-500">
+              Checking HuggingFace Hub for iTransformer model...
+            </div>
+          )}
+
+          <div className="text-xs text-gray-600">
+            <span className="text-gray-500">Architecture:</span>{" "}
+            Inverted Transformer — each feature is a token, cross-variate attention captures how features interact.
+            60-day lookback, 60-day forecast horizon. RevIN normalization for non-stationary financial data.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
