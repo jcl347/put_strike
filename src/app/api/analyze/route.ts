@@ -87,8 +87,8 @@ export async function GET(request: NextRequest) {
       return dte >= fetchMinDte && dte <= fetchMaxDte;
     });
 
-    // Fetch more expirations for wider DTE ranges
-    const maxExpirations = maxDte > 75 ? 6 : 4;
+    // Fetch more expirations to cover the full 1-120d DTE range
+    const maxExpirations = 10;
     const expirationsToFetch = relevantExpirations.slice(0, maxExpirations);
 
     const chainResults = await Promise.allSettled(
@@ -150,7 +150,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const scored = rankPuts(allPuts, hv.hvRank, marketRegime, 30, companyStability);
+    const scored = rankPuts(allPuts, hv.hvRank, marketRegime, 50, companyStability);
 
     // Group by expiration for the UI
     const byExpiration: Record<string, typeof scored> = {};
