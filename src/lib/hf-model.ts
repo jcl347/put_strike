@@ -146,10 +146,33 @@ async function ensureModelLoaded(): Promise<boolean> {
       }
       const modelBuffer = await modelRes.arrayBuffer();
 
+      // Fetch external data file if it exists (large models store tensors separately)
+      let externalData: ArrayBuffer | null = null;
+      try {
+        const extRes = await fetch(`${HF_BASE}/itransformer.onnx.data`);
+        if (extRes.ok) {
+          externalData = await extRes.arrayBuffer();
+          console.log(
+            `[hf-model] External data loaded (${(externalData.byteLength / 1024 / 1024).toFixed(1)} MB)`
+          );
+        }
+      } catch {
+        // No external data file — model is self-contained
+      }
+
       // Create ONNX session with WASM backend
+      const sessionOptions: any = { executionProviders: ["wasm"] };
+      if (externalData) {
+        sessionOptions.externalData = [
+          {
+            path: "itransformer.onnx.data",
+            data: new Uint8Array(externalData),
+          },
+        ];
+      }
       session = await ort.InferenceSession.create(
         new Uint8Array(modelBuffer),
-        { executionProviders: ["wasm"] }
+        sessionOptions
       );
       console.log(
         `[hf-model] ONNX session ready (${(modelBuffer.byteLength / 1024 / 1024).toFixed(1)} MB, WASM)`
