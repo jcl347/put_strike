@@ -140,9 +140,13 @@ export function evaluateChecklist(d: ChecklistInput): ChecklistItem[] {
       label: "RSI",
       category: "Chart Analysis",
       status: ctx.rsi14 >= 30 && ctx.rsi14 <= 70 ? "pass"
-        : ctx.rsi14 < 30 ? "warn" : "warn",
+        : (ctx.rsi14 < 25 || ctx.rsi14 > 80) ? "fail" : "warn",
       detail: `RSI(14): ${ctx.rsi14.toFixed(1)}`,
-      rule: ctx.rsi14 < 30
+      rule: ctx.rsi14 < 25
+        ? "Deeply oversold — high downtrend risk, wait for stabilization"
+        : ctx.rsi14 > 80
+        ? "Extremely overbought — high pullback risk to your strike"
+        : ctx.rsi14 < 30
         ? "Oversold — potential bounce but also downtrend risk"
         : ctx.rsi14 > 70
         ? "Overbought — higher risk of pullback to your strike"
@@ -162,17 +166,17 @@ export function evaluateChecklist(d: ChecklistInput): ChecklistItem[] {
   items.push({
     label: "Beta",
     category: "Risk Management",
-    status: d.beta <= 1.0 ? "pass" : d.beta <= 1.5 ? "warn" : "fail",
+    status: d.beta <= 1.2 ? "pass" : d.beta <= 1.5 ? "warn" : "fail",
     detail: `Beta: ${d.beta.toFixed(2)}`,
-    rule: "Lower beta = less volatile = safer for put selling (CBOE research)",
+    rule: "Lower beta = less volatile = safer for put selling (CBOE research: β ≤ 1.2)",
   });
 
   items.push({
     label: "Dividend Cushion",
     category: "Risk Management",
-    status: d.dividendYield > 1.5 ? "pass" : d.dividendYield > 0 ? "warn" : "fail",
+    status: d.dividendYield > 1.5 ? "pass" : "warn",
     detail: d.dividendYield > 0 ? `Yield: ${d.dividendYield.toFixed(2)}%` : "No dividend",
-    rule: "Dividend-paying stocks provide downside cushion if assigned",
+    rule: "Dividend-paying stocks provide downside cushion if assigned. Non-dividend quality stocks are still valid.",
   });
 
   // ── Valuation ──
@@ -214,12 +218,16 @@ export function evaluateChecklist(d: ChecklistInput): ChecklistItem[] {
       label: "Volume Activity",
       category: "Chart Analysis",
       status: volumeRatio >= 0.5 && volumeRatio <= 2 ? "pass"
-        : volumeRatio > 2 ? "warn" : "warn",
+        : (volumeRatio > 3 || volumeRatio < 0.3) ? "fail" : "warn",
       detail: `${(volumeRatio * 100).toFixed(0)}% of avg volume`,
-      rule: volumeRatio > 2
-        ? "Unusual volume — potential news or institutional activity, investigate before selling"
+      rule: volumeRatio > 3
+        ? "Extreme volume spike — likely news event, investigate before selling"
+        : volumeRatio < 0.3
+        ? "Extremely low volume — poor liquidity for options execution"
+        : volumeRatio > 2
+        ? "Elevated volume — potential institutional activity"
         : volumeRatio < 0.5
-        ? "Very low volume — may indicate poor liquidity for options"
+        ? "Low volume — may indicate poor options liquidity"
         : "Normal trading volume",
     });
   }
@@ -241,13 +249,64 @@ export function evaluateChecklist(d: ChecklistInput): ChecklistItem[] {
   return items;
 }
 
+/**
+ * Severity-weighted verdict logic.
+ *
+ * Rules are classified by severity:
+ * - Critical: Earnings, VIX crisis, Trend Direction, Moving Averages
+ *   → 1 critical fail = CAUTION minimum; 2 critical fails = AVOID
+ * - Important: IV Rank, Beta, Company Quality, Liquidity, Support
+ *   → 2 important fails = CAUTION
+ * - Informational: Dividend, P/E, RSI, Volume, ATR, 52-Week
+ *   → Context only, rarely disqualify alone
+ */
+const CRITICAL_LABELS = new Set([
+  "Earnings Clear",
+  "VIX Environment",
+  "Trend Direction",
+  "Price vs Moving Averages",
+]);
+
+const IMPORTANT_LABELS = new Set([
+  "IV Rank",
+  "Beta",
+  "Company Quality",
+  "Liquidity",
+  "Support Level",
+]);
+
 export function getVerdict(items: ChecklistItem[]): "SELL PUT" | "CAUTION" | "AVOID" {
-  const fails = items.filter(i => i.status === "fail").length;
+  let criticalFails = 0;
+  let importantFails = 0;
+  let infoFails = 0;
+
+  for (const item of items) {
+    if (item.status !== "fail") continue;
+    if (CRITICAL_LABELS.has(item.label)) criticalFails++;
+    else if (IMPORTANT_LABELS.has(item.label)) importantFails++;
+    else infoFails++;
+  }
+
+  const totalFails = criticalFails + importantFails + infoFails;
   const passes = items.filter(i => i.status === "pass").length;
   const total = items.length;
 
-  if (fails >= 3 || (fails >= 2 && passes < total * 0.5)) return "AVOID";
-  if (fails >= 1 || passes < total * 0.6) return "CAUTION";
+  // 2+ critical fails → AVOID
+  if (criticalFails >= 2) return "AVOID";
+  // 1 critical + 2 important → AVOID
+  if (criticalFails >= 1 && importantFails >= 2) return "AVOID";
+  // 3+ important fails → AVOID
+  if (importantFails >= 3) return "AVOID";
+  // Many total fails → AVOID
+  if (totalFails >= 4) return "AVOID";
+
+  // 1 critical fail → CAUTION minimum
+  if (criticalFails >= 1) return "CAUTION";
+  // 2+ important fails → CAUTION
+  if (importantFails >= 2) return "CAUTION";
+  // Low pass rate → CAUTION
+  if (passes < total * 0.6) return "CAUTION";
+
   return "SELL PUT";
 }
 

@@ -146,7 +146,9 @@ describe("Put Scoring Model", () => {
     const normalScored = scorePut(put, 50, normalRegime);
     const crisisScored = scorePut(put, 50, crisisRegime);
 
-    expect(crisisScored.score).toBeLessThan(normalScored.score * 0.7);
+    // Crisis multiplier is 0.75 (softened from 0.6 per Neuberger Berman research
+    // showing put-writing works across VIX quartiles with wider strikes)
+    expect(crisisScored.score).toBeLessThan(normalScored.score * 0.8);
   });
 
   test("good liquidity (tight spread, high OI) scores higher", () => {

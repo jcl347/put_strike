@@ -297,19 +297,19 @@ export function scorePut(
     weight: 0.08,
   });
 
-  // 3. Delta Quality (0.15-0.30 is sweet spot)
+  // 3. Delta Quality (0.14-0.22 is sweet spot per tastytrade 16Δ / DDO 20Δ research)
   const absDelta = Math.abs(candidate.delta);
   let deltaScore: number;
-  if (absDelta >= 0.15 && absDelta <= 0.30) deltaScore = 100;
-  else if (absDelta >= 0.10 && absDelta <= 0.35) deltaScore = 75;
-  else if (absDelta >= 0.05 && absDelta <= 0.45) deltaScore = 50;
+  if (absDelta >= 0.14 && absDelta <= 0.22) deltaScore = 100;
+  else if (absDelta >= 0.10 && absDelta <= 0.30) deltaScore = 75;
+  else if (absDelta >= 0.05 && absDelta <= 0.40) deltaScore = 50;
   else deltaScore = 20;
 
   const probOTM = ((1 - absDelta) * 100).toFixed(0);
   signals.push({
     name: "Delta / P(OTM)",
     value: `${absDelta.toFixed(2)} / ${probOTM}%`,
-    sentiment: absDelta >= 0.15 && absDelta <= 0.30 ? "bullish" : "neutral",
+    sentiment: absDelta >= 0.14 && absDelta <= 0.22 ? "bullish" : "neutral",
     weight: 0.13,
   });
 
@@ -346,20 +346,20 @@ export function scorePut(
     weight: 0.10,
   });
 
-  // 6. Distance OTM — narrowed sweet spot to 3-12% (captures more premium)
+  // 6. Distance OTM — 5-12% sweet spot (typical for 16-20Δ at 45 DTE per tastytrade/DDO)
   const distanceOTM =
     ((candidate.stockPrice - candidate.strikePrice) / candidate.stockPrice) * 100;
 
   let distanceScore: number;
-  if (distanceOTM >= 3 && distanceOTM <= 12) distanceScore = 100;
-  else if (distanceOTM >= 2 && distanceOTM <= 18) distanceScore = 70;
+  if (distanceOTM >= 5 && distanceOTM <= 12) distanceScore = 100;
+  else if (distanceOTM >= 3 && distanceOTM <= 18) distanceScore = 70;
   else if (distanceOTM >= 1 && distanceOTM <= 25) distanceScore = 40;
   else distanceScore = 15;
 
   signals.push({
     name: "Distance OTM",
     value: `${distanceOTM.toFixed(1)}%`,
-    sentiment: distanceOTM >= 3 && distanceOTM <= 12 ? "bullish" : "neutral",
+    sentiment: distanceOTM >= 5 && distanceOTM <= 12 ? "bullish" : "neutral",
     weight: 0.10,
   });
 
@@ -410,7 +410,7 @@ export function scorePut(
 
   // Apply market regime modifier
   let adjustedScore = score;
-  if (marketRegime.regime === "CRISIS") adjustedScore *= 0.6;
+  if (marketRegime.regime === "CRISIS") adjustedScore *= 0.75;
   else if (marketRegime.regime === "HIGH_VOL") adjustedScore *= 0.9;
   else if (marketRegime.regime === "NORMAL") adjustedScore *= 1.0;
   else adjustedScore *= 0.95;
