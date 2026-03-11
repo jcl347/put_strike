@@ -393,6 +393,12 @@ export async function getStockContext(
 
   if (closes.length < 50) return defaultCtx;
 
+  // Use the last historical close when currentPrice is 0 or missing
+  // (predict API fetches quote in parallel so can't pass price upfront)
+  if (!currentPrice || currentPrice <= 0) {
+    currentPrice = closes[closes.length - 1];
+  }
+
   // SMAs
   const sma = (arr: number[], period: number) => {
     if (arr.length < period) return arr[arr.length - 1];

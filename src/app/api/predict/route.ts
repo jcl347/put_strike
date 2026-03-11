@@ -35,6 +35,13 @@ export async function GET(request: NextRequest) {
 
   const upperSymbol = symbol.toUpperCase();
 
+  // Accept optional trend override from analyze API to ensure consistency
+  // between PricePrediction and PutDecisionAssistant components
+  const trendParam = request.nextUrl.searchParams.get("trend");
+  const trendOverride = trendParam === "up" || trendParam === "down" || trendParam === "sideways"
+    ? trendParam as "up" | "down" | "sideways"
+    : null;
+
   try {
     // Fetch all data sources in parallel
     const [quote, hv, vix, context, chain, historyResult] = await Promise.all([
@@ -49,6 +56,12 @@ export async function GET(request: NextRequest) {
     // Update context with actual price
     if (context) {
       context.supportLevel = context.supportLevel || quote.price * 0.93;
+    }
+
+    // Use trend from analyze API if provided, to avoid inconsistency
+    // between the PutDecisionAssistant checklist and PricePrediction components
+    if (trendOverride && context) {
+      context.trendDirection = trendOverride;
     }
 
     // Build options snapshot

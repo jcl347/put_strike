@@ -177,7 +177,9 @@ export default function Home() {
       setAnalysis(analysisData);
       setDataSourceStatus("connected");
       // Trigger predictions in background — both statistical ensemble and iTransformer
-      fetchPrediction(symbol);
+      // Pass trendDirection from analyze context to ensure consistency between components
+      const trend = (analysisData as any).context?.trendDirection ?? null;
+      fetchPrediction(symbol, trend);
       fetchSingleForecast(symbol, analysisData.quote.price);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Analysis failed";
@@ -195,10 +197,11 @@ export default function Home() {
   }, []);
 
   // Fetch price prediction for a symbol
-  const fetchPrediction = useCallback(async (symbol: string) => {
+  const fetchPrediction = useCallback(async (symbol: string, trendDirection?: string | null) => {
     setPredictionLoading(true);
     try {
-      const url = `/api/predict?symbol=${encodeURIComponent(symbol)}`;
+      let url = `/api/predict?symbol=${encodeURIComponent(symbol)}`;
+      if (trendDirection) url += `&trend=${encodeURIComponent(trendDirection)}`;
       const res = await fetch(url);
       const { data } = await safeParseResponse(res);
       if (res.ok && data) {
