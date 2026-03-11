@@ -138,7 +138,7 @@ The iTransformer pipeline:
 - **Inference**: Website downloads per-stock ONNX model on demand, runs via onnxruntime-web (WASM)
 - **ONNX Export**: Uses legacy TorchScript exporter (`dynamo=False`) with `dynamic_axes` — dynamo exporter incompatible with RevIN architecture
 - **No Colab dependency at runtime** — models are self-contained on HF
-- **Secrets**: HF_TOKEN and HF_REPO_ID loaded via Colab Secrets (key icon in sidebar)
+- **Secrets**: HF_TOKEN, HF_REPO_ID, and FRED_API_KEY loaded via Colab Secrets (key icon in sidebar)
 
 ### Training Strategy
 
@@ -164,27 +164,62 @@ Standard Transformers treat time steps as tokens. iTransformer **inverts** this 
 
 Config: `d_model=128, n_heads=8, n_layers=3, d_ff=256, dropout=0.15`
 
-### Feature Engineering (83 features)
+### Feature Engineering (126 features)
 
 Features computed in both Python (notebook) and TypeScript (website) — must stay synchronized:
 
-| Category | Features | Source |
-|----------|----------|--------|
-| Price Action | SMA/EMA crosses, Bollinger, ATR, Keltner | OHLCV |
-| Momentum | RSI, MACD, Stochastic, Williams %R, CCI, Aroon, ROC | OHLCV |
-| Volume | OBV, CMF, relative volume, volume z-score | OHLCV |
-| Volatility | HV 5/10/20/60d, vol expansion ratio, skewness, kurtosis | OHLCV |
-| Statistical | Z-scores, percentile ranks, autocorrelation, Hurst exponent | OHLCV |
-| Macro | VIX term structure, Treasury yields, USD index, Gold, Oil | Yahoo tickers |
-| Calendar | Day of week, month cycle, OPEX week, quarter end | Date |
-| Returns | 1/5/10/20/60d log returns, drawdown, up/down ratios | OHLCV |
+| Category | Count | Features | Source |
+|----------|-------|----------|--------|
+| Price Action | 10 | SMA/EMA crosses, Bollinger, ATR | OHLCV |
+| Momentum | 15 | RSI, MACD, Stochastic, Williams %R, CCI, Aroon, ROC | OHLCV |
+| Volume (basic) | 5 | OBV, CMF, relative volume, volume z-score | OHLCV |
+| Volume (advanced) | 4 | MFI-14, A/D line z-score, VWAP deviation, Force Index | OHLCV |
+| Volatility | 4 | HV 5/10/20/60d | OHLCV |
+| Statistical | 10 | Z-scores, percentile ranks, autocorrelation | OHLCV |
+| Regime Detection | 5 | Hurst exponent, Parkinson vol, Garman-Klass vol, return consistency, tail ratio | OHLCV |
+| Price Structure | 5 | Range position 20/60d, ATR ratio 7/60, consecutive up days, candle body ratio | OHLCV |
+| Relative Strength | 4 | Returns vs SPY (5/20/60d), rolling correlation with SPY | OHLCV + SPY |
+| Cross-Asset Corr | 3 | Rolling correlation with VIX, rolling beta to SPY, volume-price correlation | OHLCV + macro |
+| Intermarket | 4 | SPY momentum (5/20d), gold/oil ratio change, DXY-VIX interaction | Macro tickers |
+| Macro | 10 | VIX term structure, Treasury yields, USD index, Gold, Oil | Yahoo tickers |
+| Calendar | 5 | Day of week, month cycle, OPEX week, quarter end | Date |
+| Returns | 5 | 1/5/10/20/60d log returns | OHLCV |
+| Drawdown/Gap | 4 | Max drawdown 20/60d, avg gap, gap frequency | OHLCV |
+| Trend | 5 | Price slopes, Ichimoku, up/down ratios | OHLCV |
+| Moments | 4 | Skewness/kurtosis 20/60d | OHLCV |
+| Vol Regime | 2 | Vol expansion ratio, vol expanding flag | OHLCV |
+| Sector ETF Relative | 3 | Stock vs sector ETF returns (5/20d), sector correlation | Sector ETFs |
+| Credit Market | 4 | HYG/TLT returns, credit spread proxy, HYG-SPY divergence | HYG, TLT |
+| VIX Term Structure | 1 | VIX9D/VIX short-term fear ratio | ^VIX9D |
+| Industry Commodity | 2 | Per-stock commodity correlation and return | NG=F, HG=F, BTC-USD |
+| Intermarket Extended | 2 | Copper/gold ratio change, BTC sentiment | HG=F, BTC-USD |
+| FRED Macro | 6 | HY credit spread, yield curve, breakeven inflation, 2Y yield, jobless claims z-score, consumer sentiment change | FRED API |
 
 **Macro data sources:**
 - `^VIX`, `^VIX3M` — VIX term structure (contango/backwardation signals risk appetite)
+- `^VIX9D` — 9-day VIX (ultra-short-term fear, VIX9D/VIX ratio signals panic spikes)
 - `^TNX` — 10-year Treasury yield (rate sensitivity, growth vs value rotation)
 - `DX-Y.NYB` — US Dollar Index (inverse correlation with equities for many sectors)
 - `GC=F` — Gold futures (risk-off indicator)
 - `CL=F` — Crude Oil futures (energy sector driver, inflation proxy)
+- `SPY` — S&P 500 ETF (market benchmark for relative strength features)
+- `HYG` — iShares High Yield Corporate Bond ETF (credit appetite signal)
+- `TLT` — iShares 20+ Year Treasury Bond ETF (flight to safety signal)
+- `HG=F` — Copper futures (economic health indicator, copper/gold ratio)
+- `BTC-USD` — Bitcoin (risk-on sentiment, fintech sector driver)
+- `NG=F` — Natural Gas futures (energy sector commodity, via industry mapping)
+
+**FRED API data sources** (requires `FRED_API_KEY` env var):
+- `BAMLH0A0HYM2` — ICE BofA US High Yield OAS (credit spread level, risk appetite)
+- `T10Y2Y` — 10-Year minus 2-Year Treasury yield curve (inversion = recession signal)
+- `T10YIE` — 10-Year Breakeven Inflation Rate (inflation expectations)
+- `DGS2` — 2-Year Treasury Constant Maturity Rate (short-term rate expectations)
+- `ICSA` — Initial Jobless Claims, weekly (labor market health, z-scored over 20d)
+- `UMCSENT` — University of Michigan Consumer Sentiment, monthly (consumer confidence, 20d pct change)
+
+**Per-stock mappings:**
+- `SECTOR_ETF_MAP` — Maps each stock to its GICS sector ETF (XLK, XLF, XLV, XLE, XLI, XLY, XLP, XLC). Sector-relative features capture whether a stock is outperforming/underperforming its peers, independent of broad market moves.
+- `INDUSTRY_COMMODITY_MAP` — Maps energy stocks to NG=F, industrials to HG=F, fintech to BTC-USD. Only stocks with strong commodity sensitivity are mapped; unmapped stocks get 0-filled commodity features.
 
 ### Prediction Horizons
 
@@ -237,12 +272,15 @@ iTransformer predictions validate the scoring model's recommendations:
 2. **H2: Longer lookback helps long horizons** — 120-day lookback improves 45-60d predictions vs 60-day lookback. Test by comparing horizon-specific accuracy.
 3. **H3: iTransformer concordance predicts put profitability** — Puts where scoring and iTransformer agree have higher simulated win rates. Test on historical data.
 4. **H4: Feature selection beats all-features** — Top-K features by mutual information outperform full feature set. Test via training comparison.
+5. **H5: Relative strength + regime features improve tail accuracy** — The 25 new v5.0 features (relative strength, advanced volume, regime detection, intermarket) should improve predictions for stocks with the worst v4.0 accuracy (AMAT, INTC, PANW at ~52-55%) by providing market context that OHLCV alone misses.
+6. **H6: Credit/sector/commodity features improve sector-specific accuracy** — The 12 v6.0 features (sector ETF relative strength, credit market signals, industry commodities) should improve predictions for sector-sensitive stocks (energy, financials, industrials) by capturing sector rotation, credit conditions, and commodity sensitivity that broad market indicators miss.
+7. **H7: FRED macro indicators improve regime-change predictions** — The 6 v7.0 FRED features (HY spread, yield curve, breakeven inflation, 2Y yield, jobless claims, consumer sentiment) should improve predictions during macro regime changes (rate hikes, credit stress, recession signals) by providing direct economic data that market-derived proxies (VIX, HYG/TLT) may lag.
 
 ### Modifying the ML Pipeline
 
-- **Colab secrets**: Add `HF_TOKEN` and `HF_REPO_ID` via the Secrets panel (key icon) in Colab
+- **Colab secrets**: Add `HF_TOKEN`, `HF_REPO_ID`, and `FRED_API_KEY` via the Secrets panel (key icon) in Colab
 - **Training config**: Edit Cell 3 of `colab/train_itransformer.ipynb`
-- **Feature engineering**: Edit `compute_features()` in the notebook AND `src/lib/itransformer-features.ts` (must stay in sync)
+- **Feature engineering**: Edit `compute_features()` in the notebook AND `src/lib/itransformer-features.ts` (must stay in sync). Also update `src/app/api/forecast/route.ts` macro tickers if adding new data sources. FRED features also require `src/lib/fred.ts` updates
 - **Model architecture**: Edit the `iTransformer` class in notebook Cell 6
 - **Website inference**: Edit `src/lib/hf-model.ts`
 - **ONNX export**: Uses the legacy TorchScript exporter (`dynamo=False`) with `dynamic_axes` because the dynamo exporter (`torch.export.export`) fails on RevIN's dynamic buffer reassignment and string `mode` parameter. Requires `onnxscript` pip package (PyTorch ONNX infrastructure dependency). The `TransformerEncoder` uses `enable_nested_tensor=False` to suppress warnings when `norm_first=True`.

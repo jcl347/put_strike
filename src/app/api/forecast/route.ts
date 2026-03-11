@@ -2,9 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   computeITransformerFeatures,
   normalizeFeatures,
+  SECTOR_ETF_MAP,
+  INDUSTRY_COMMODITY_MAP,
   type OHLCV,
   type MacroData,
 } from "@/lib/itransformer-features";
+import { fetchFredMacroData, type FredMacroData } from "@/lib/fred";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -13,7 +16,7 @@ export const maxDuration = 30;
 
 /**
  * Forecast feature endpoint.
- * Computes the 83 iTransformer features from OHLCV + macro data,
+ * Computes the 120 iTransformer features from OHLCV + macro + sector/credit data,
  * normalizes them using per-stock stats from HuggingFace model config,
  * and returns a ready-to-use feature matrix for client-side ONNX inference.
  *
@@ -27,11 +30,16 @@ export async function GET(request: NextRequest) {
 
   const upperSymbol = symbol.toUpperCase();
 
+  // Determine per-stock sector ETF and industry commodity
+  const sectorEtfSymbol = SECTOR_ETF_MAP[upperSymbol];
+  const industryCommoditySymbol = INDUSTRY_COMMODITY_MAP[upperSymbol];
+
   try {
-    // Fetch OHLCV (1 year) + macro data in parallel
-    const [ohlcv, rawMacro] = await Promise.all([
+    // Fetch OHLCV (1 year) + macro data + FRED data in parallel
+    const [ohlcv, rawMacro, fredData] = await Promise.all([
       fetchOHLCV(upperSymbol, 1),
-      fetchMacroDataWithDates(),
+      fetchMacroDataWithDates(sectorEtfSymbol, industryCommoditySymbol),
+      fetchFredMacroData(),
     ]);
 
     if (ohlcv.length < 70) {
@@ -44,9 +52,9 @@ export async function GET(request: NextRequest) {
     // Align macro data to stock dates using forward-fill
     // This matches the Python training: macro_df.reindex(df.index, method="ffill")
     const stockDates = ohlcv.map(d => d.date);
-    const macroData = alignMacroToStockDates(rawMacro, stockDates);
+    const macroData = alignMacroToStockDates(rawMacro, stockDates, fredData);
 
-    // Compute 83 features for all available days
+    // Compute 126 features for all available days
     const rawFeatures = computeITransformerFeatures(ohlcv, macroData);
 
     // Fetch normalization stats from HuggingFace model config
@@ -58,7 +66,7 @@ export async function GET(request: NextRequest) {
       featureMatrix = normalizeFeatures(rawFeatures, normStats.mean, normStats.std);
     } else {
       // Fallback: z-score normalize using the window's own stats
-      const numFeatures = 83;
+      const numFeatures = rawFeatures[0]?.length ?? 126;
       const mean = new Array(numFeatures).fill(0);
       const std = new Array(numFeatures).fill(0);
       for (let j = 0; j < numFeatures; j++) {
@@ -137,13 +145,25 @@ interface RawMacroData {
   dxy?: Record<string, number>;
   gold?: Record<string, number>;
   oil?: Record<string, number>;
+  spy?: Record<string, number>;
+  sectorEtf?: Record<string, number>;
+  hyg?: Record<string, number>;
+  tlt?: Record<string, number>;
+  vix9d?: Record<string, number>;
+  industryCommodity?: Record<string, number>;
+  copper?: Record<string, number>;
+  btc?: Record<string, number>;
 }
 
 /**
  * Fetch macro data with date keys (not raw arrays).
  * This allows proper date alignment with any stock's trading days.
+ * Optionally fetches per-stock sector ETF and industry commodity tickers.
  */
-async function fetchMacroDataWithDates(): Promise<RawMacroData> {
+async function fetchMacroDataWithDates(
+  sectorEtfSymbol?: string,
+  industryCommoditySymbol?: string
+): Promise<RawMacroData> {
   const YahooFinanceModule = (await import("yahoo-finance2")).default;
   let yahooFinance: any;
   try {
@@ -153,14 +173,40 @@ async function fetchMacroDataWithDates(): Promise<RawMacroData> {
     yahooFinance = new Ctor({ suppressNotices: ["yahooSurvey"] });
   }
 
-  const tickers = [
+  const tickers: { symbol: string; key: string }[] = [
     { symbol: "^VIX", key: "vix" },
     { symbol: "^VIX3M", key: "vix3m" },
     { symbol: "^TNX", key: "tnx" },
     { symbol: "DX-Y.NYB", key: "dxy" },
     { symbol: "GC=F", key: "gold" },
     { symbol: "CL=F", key: "oil" },
+    { symbol: "SPY", key: "spy" },
+    { symbol: "HYG", key: "hyg" },
+    { symbol: "TLT", key: "tlt" },
+    { symbol: "^VIX9D", key: "vix9d" },
+    { symbol: "HG=F", key: "copper" },
+    { symbol: "BTC-USD", key: "btc" },
   ];
+
+  // Add per-stock sector ETF if mapped (avoid duplicates with SPY)
+  if (sectorEtfSymbol && sectorEtfSymbol !== "SPY") {
+    tickers.push({ symbol: sectorEtfSymbol, key: "sectorEtf" });
+  }
+
+  // Add per-stock industry commodity if mapped (avoid duplicates)
+  if (industryCommoditySymbol) {
+    const existingKeys = tickers.map(t => t.symbol);
+    if (!existingKeys.includes(industryCommoditySymbol)) {
+      tickers.push({ symbol: industryCommoditySymbol, key: "industryCommodity" });
+    } else {
+      // Commodity already in base tickers — map the key
+      const existing = tickers.find(t => t.symbol === industryCommoditySymbol);
+      if (existing) {
+        // We'll duplicate the data in alignment step
+        tickers.push({ symbol: industryCommoditySymbol, key: "industryCommodity" });
+      }
+    }
+  }
 
   const endDate = new Date();
   const startDate = new Date();
@@ -204,7 +250,8 @@ async function fetchMacroDataWithDates(): Promise<RawMacroData> {
  */
 function alignMacroToStockDates(
   rawMacro: RawMacroData,
-  stockDates: string[]
+  stockDates: string[],
+  fredData?: FredMacroData
 ): MacroData {
   const aligned: MacroData = {};
 
@@ -237,6 +284,24 @@ function alignMacroToStockDates(
   aligned.dxy = forwardFillAlign(rawMacro.dxy);
   aligned.gold = forwardFillAlign(rawMacro.gold);
   aligned.oil = forwardFillAlign(rawMacro.oil);
+  aligned.spy = forwardFillAlign(rawMacro.spy);
+  aligned.sectorEtf = forwardFillAlign(rawMacro.sectorEtf ?? rawMacro.spy); // fallback to SPY
+  aligned.hyg = forwardFillAlign(rawMacro.hyg);
+  aligned.tlt = forwardFillAlign(rawMacro.tlt);
+  aligned.vix9d = forwardFillAlign(rawMacro.vix9d);
+  aligned.industryCommodity = forwardFillAlign(rawMacro.industryCommodity);
+  aligned.copper = forwardFillAlign(rawMacro.copper);
+  aligned.btc = forwardFillAlign(rawMacro.btc);
+
+  // FRED macro data alignment
+  if (fredData) {
+    aligned.fredHySpread = forwardFillAlign(fredData.hySpread);
+    aligned.fredYieldCurve = forwardFillAlign(fredData.yieldCurve);
+    aligned.fredBreakeven = forwardFillAlign(fredData.breakeven);
+    aligned.fredTreasury2y = forwardFillAlign(fredData.treasury2y);
+    aligned.fredJoblessClaims = forwardFillAlign(fredData.joblessClaims);
+    aligned.fredConsumerSentiment = forwardFillAlign(fredData.consumerSentiment);
+  }
 
   return aligned;
 }
