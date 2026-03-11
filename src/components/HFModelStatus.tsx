@@ -9,6 +9,7 @@ interface ModelInfo {
   dirAcc30d?: number;
   onnxSizeMb?: number;
   numStocks?: number;
+  numPerStockModels?: number;
 }
 
 export default function HFModelStatus() {
@@ -19,11 +20,25 @@ export default function HFModelStatus() {
     // Try loading the model config from HuggingFace to check availability
     const repoId = process.env.NEXT_PUBLIC_HF_REPO_ID || "jcl347/putstrike";
     const configUrl = `https://huggingface.co/${repoId}/resolve/main/model_config.json`;
+    const perStockUrl = `https://huggingface.co/${repoId}/resolve/main/per_stock/per_stock_config.json`;
 
-    fetch(configUrl, { signal: AbortSignal.timeout(8000) })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const config = await res.json();
+    Promise.all([
+      fetch(configUrl, { signal: AbortSignal.timeout(8000) })
+        .then(async (res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.json();
+        }),
+      fetch(perStockUrl, { signal: AbortSignal.timeout(8000) })
+        .then(async (res) => {
+          if (!res.ok) return null;
+          return res.json();
+        })
+        .catch(() => null),
+    ])
+      .then(([config, perStockConfig]) => {
+        const numPerStock = perStockConfig?.per_stock_metrics
+          ? Object.keys(perStockConfig.per_stock_metrics).length
+          : 0;
         setInfo({
           status: "connected",
           numFeatures: config.num_features,
@@ -31,6 +46,7 @@ export default function HFModelStatus() {
           dirAcc30d: config.test_metrics?.dir_acc_30d,
           onnxSizeMb: config.onnx_size_mb,
           numStocks: config.training?.num_stocks,
+          numPerStockModels: numPerStock,
         });
       })
       .catch(() => {
@@ -75,11 +91,14 @@ export default function HFModelStatus() {
                   </span>
                 )}
                 {info.dirAcc30d && <span>{info.dirAcc30d.toFixed(1)}% dir. accuracy (30d)</span>}
-                {info.numStocks && <span>Trained on {info.numStocks} stocks</span>}
+                {info.numStocks && <span>Universal: {info.numStocks} stocks</span>}
+                {info.numPerStockModels ? (
+                  <span>Per-stock: {info.numPerStockModels} models</span>
+                ) : null}
                 {info.onnxSizeMb && <span>{info.onnxSizeMb.toFixed(1)} MB ONNX</span>}
               </div>
               <p className="text-green-600 mt-1">
-                Runs in-browser via onnxruntime-web (WASM). No GPU or server needed.
+                Runs in-browser via onnxruntime-web (WASM). Per-stock model used when available, universal as fallback.
               </p>
             </div>
           )}
