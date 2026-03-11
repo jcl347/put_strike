@@ -13,7 +13,7 @@ export const maxDuration = 30;
 
 /**
  * Forecast feature endpoint.
- * Computes the 83 iTransformer features from OHLCV + macro data,
+ * Computes the 108 iTransformer features from OHLCV + macro data,
  * normalizes them using per-stock stats from HuggingFace model config,
  * and returns a ready-to-use feature matrix for client-side ONNX inference.
  *
@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
     const stockDates = ohlcv.map(d => d.date);
     const macroData = alignMacroToStockDates(rawMacro, stockDates);
 
-    // Compute 83 features for all available days
+    // Compute 108 features for all available days
     const rawFeatures = computeITransformerFeatures(ohlcv, macroData);
 
     // Fetch normalization stats from HuggingFace model config
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
       featureMatrix = normalizeFeatures(rawFeatures, normStats.mean, normStats.std);
     } else {
       // Fallback: z-score normalize using the window's own stats
-      const numFeatures = 83;
+      const numFeatures = rawFeatures[0]?.length ?? 108;
       const mean = new Array(numFeatures).fill(0);
       const std = new Array(numFeatures).fill(0);
       for (let j = 0; j < numFeatures; j++) {
@@ -137,6 +137,7 @@ interface RawMacroData {
   dxy?: Record<string, number>;
   gold?: Record<string, number>;
   oil?: Record<string, number>;
+  spy?: Record<string, number>;
 }
 
 /**
@@ -160,6 +161,7 @@ async function fetchMacroDataWithDates(): Promise<RawMacroData> {
     { symbol: "DX-Y.NYB", key: "dxy" },
     { symbol: "GC=F", key: "gold" },
     { symbol: "CL=F", key: "oil" },
+    { symbol: "SPY", key: "spy" },
   ];
 
   const endDate = new Date();
@@ -237,6 +239,7 @@ function alignMacroToStockDates(
   aligned.dxy = forwardFillAlign(rawMacro.dxy);
   aligned.gold = forwardFillAlign(rawMacro.gold);
   aligned.oil = forwardFillAlign(rawMacro.oil);
+  aligned.spy = forwardFillAlign(rawMacro.spy);
 
   return aligned;
 }

@@ -164,20 +164,30 @@ Standard Transformers treat time steps as tokens. iTransformer **inverts** this 
 
 Config: `d_model=128, n_heads=8, n_layers=3, d_ff=256, dropout=0.15`
 
-### Feature Engineering (83 features)
+### Feature Engineering (108 features)
 
 Features computed in both Python (notebook) and TypeScript (website) — must stay synchronized:
 
-| Category | Features | Source |
-|----------|----------|--------|
-| Price Action | SMA/EMA crosses, Bollinger, ATR, Keltner | OHLCV |
-| Momentum | RSI, MACD, Stochastic, Williams %R, CCI, Aroon, ROC | OHLCV |
-| Volume | OBV, CMF, relative volume, volume z-score | OHLCV |
-| Volatility | HV 5/10/20/60d, vol expansion ratio, skewness, kurtosis | OHLCV |
-| Statistical | Z-scores, percentile ranks, autocorrelation, Hurst exponent | OHLCV |
-| Macro | VIX term structure, Treasury yields, USD index, Gold, Oil | Yahoo tickers |
-| Calendar | Day of week, month cycle, OPEX week, quarter end | Date |
-| Returns | 1/5/10/20/60d log returns, drawdown, up/down ratios | OHLCV |
+| Category | Count | Features | Source |
+|----------|-------|----------|--------|
+| Price Action | 10 | SMA/EMA crosses, Bollinger, ATR | OHLCV |
+| Momentum | 15 | RSI, MACD, Stochastic, Williams %R, CCI, Aroon, ROC | OHLCV |
+| Volume (basic) | 5 | OBV, CMF, relative volume, volume z-score | OHLCV |
+| Volume (advanced) | 4 | MFI-14, A/D line z-score, VWAP deviation, Force Index | OHLCV |
+| Volatility | 4 | HV 5/10/20/60d | OHLCV |
+| Statistical | 10 | Z-scores, percentile ranks, autocorrelation | OHLCV |
+| Regime Detection | 5 | Hurst exponent, Parkinson vol, Garman-Klass vol, return consistency, tail ratio | OHLCV |
+| Price Structure | 5 | Range position 20/60d, ATR ratio 7/60, consecutive up days, candle body ratio | OHLCV |
+| Relative Strength | 4 | Returns vs SPY (5/20/60d), rolling correlation with SPY | OHLCV + SPY |
+| Cross-Asset Corr | 3 | Rolling correlation with VIX, rolling beta to SPY, volume-price correlation | OHLCV + macro |
+| Intermarket | 4 | SPY momentum (5/20d), gold/oil ratio change, DXY-VIX interaction | Macro tickers |
+| Macro | 10 | VIX term structure, Treasury yields, USD index, Gold, Oil | Yahoo tickers |
+| Calendar | 5 | Day of week, month cycle, OPEX week, quarter end | Date |
+| Returns | 5 | 1/5/10/20/60d log returns | OHLCV |
+| Drawdown/Gap | 4 | Max drawdown 20/60d, avg gap, gap frequency | OHLCV |
+| Trend | 5 | Price slopes, Ichimoku, up/down ratios | OHLCV |
+| Moments | 4 | Skewness/kurtosis 20/60d | OHLCV |
+| Vol Regime | 2 | Vol expansion ratio, vol expanding flag | OHLCV |
 
 **Macro data sources:**
 - `^VIX`, `^VIX3M` — VIX term structure (contango/backwardation signals risk appetite)
@@ -185,6 +195,7 @@ Features computed in both Python (notebook) and TypeScript (website) — must st
 - `DX-Y.NYB` — US Dollar Index (inverse correlation with equities for many sectors)
 - `GC=F` — Gold futures (risk-off indicator)
 - `CL=F` — Crude Oil futures (energy sector driver, inflation proxy)
+- `SPY` — S&P 500 ETF (market benchmark for relative strength features)
 
 ### Prediction Horizons
 
@@ -237,12 +248,13 @@ iTransformer predictions validate the scoring model's recommendations:
 2. **H2: Longer lookback helps long horizons** — 120-day lookback improves 45-60d predictions vs 60-day lookback. Test by comparing horizon-specific accuracy.
 3. **H3: iTransformer concordance predicts put profitability** — Puts where scoring and iTransformer agree have higher simulated win rates. Test on historical data.
 4. **H4: Feature selection beats all-features** — Top-K features by mutual information outperform full feature set. Test via training comparison.
+5. **H5: Relative strength + regime features improve tail accuracy** — The 25 new v5.0 features (relative strength, advanced volume, regime detection, intermarket) should improve predictions for stocks with the worst v4.0 accuracy (AMAT, INTC, PANW at ~52-55%) by providing market context that OHLCV alone misses.
 
 ### Modifying the ML Pipeline
 
 - **Colab secrets**: Add `HF_TOKEN` and `HF_REPO_ID` via the Secrets panel (key icon) in Colab
 - **Training config**: Edit Cell 3 of `colab/train_itransformer.ipynb`
-- **Feature engineering**: Edit `compute_features()` in the notebook AND `src/lib/itransformer-features.ts` (must stay in sync)
+- **Feature engineering**: Edit `compute_features()` in the notebook AND `src/lib/itransformer-features.ts` (must stay in sync). Also update `src/app/api/forecast/route.ts` macro tickers if adding new data sources
 - **Model architecture**: Edit the `iTransformer` class in notebook Cell 6
 - **Website inference**: Edit `src/lib/hf-model.ts`
 - **ONNX export**: Uses the legacy TorchScript exporter (`dynamo=False`) with `dynamic_axes` because the dynamo exporter (`torch.export.export`) fails on RevIN's dynamic buffer reassignment and string `mode` parameter. Requires `onnxscript` pip package (PyTorch ONNX infrastructure dependency). The `TransformerEncoder` uses `enable_nested_tensor=False` to suppress warnings when `norm_first=True`.
