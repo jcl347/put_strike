@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
     const stockDates = ohlcv.map(d => d.date);
     const macroData = alignMacroToStockDates(rawMacro, stockDates, fredData);
 
-    // Compute 120 features for all available days
+    // Compute 126 features for all available days
     const rawFeatures = computeITransformerFeatures(ohlcv, macroData);
 
     // Fetch normalization stats from HuggingFace model config
