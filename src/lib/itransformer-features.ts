@@ -1,21 +1,24 @@
 /**
  * iTransformer Feature Engineering — Server-Side
  *
- * Computes the exact 108 features used to train the iTransformer model.
+ * Computes the exact 120 features used to train the iTransformer model.
  * Must stay in sync with compute_features() in colab/train_itransformer.ipynb.
  *
  * Input: OHLCV daily data (need 260+ days for warmup)
- * Output: (numDays, 108) feature matrix for the available days
+ * Output: (numDays, 120) feature matrix for the available days
  *
  * Features 0-82: Original technicals + macro (SMA/EMA, RSI, MACD, BB, ATR,
  *   volume, stochastic, ROC, CCI, Aroon, returns, volatility, moments,
  *   autocorrelation, z-scores, percentile ranks, drawdown, gaps, calendar,
  *   trend slopes, Ichimoku, vol regime, VIX, Treasury, USD, Gold, Oil)
- * Features 83-107: New features (relative strength vs SPY, cross-asset
- *   correlations, advanced volume [MFI, A/D, VWAP, Force Index], price
- *   structure [range position, ATR ratio, consecutive days, candle body],
+ * Features 83-107: Relative strength vs SPY, cross-asset correlations,
+ *   advanced volume [MFI, A/D, VWAP, Force Index], price structure
+ *   [range position, ATR ratio, consecutive days, candle body],
  *   statistical regime [Hurst, Parkinson/GK vol, consistency, tail ratio],
- *   intermarket [SPY momentum, gold/oil ratio, DXY-VIX interaction])
+ *   intermarket [SPY momentum, gold/oil ratio, DXY-VIX interaction]
+ * Features 108-119: Industry/sector/credit features — sector ETF relative
+ *   strength, credit market signals (HYG/TLT), VIX9D term structure,
+ *   industry commodity sensitivity, copper/gold ratio, BTC sentiment
  */
 
 export const FEATURE_NAMES = [
@@ -60,6 +63,12 @@ export const FEATURE_NAMES = [
   "return_consistency_20d", "tail_ratio_20d",
   "spy_return_5d", "spy_return_20d",
   "gold_oil_ratio_change", "dxy_vix_interaction",
+  // Industry/sector/credit features (108-119)
+  "sector_rel_return_5d", "sector_rel_return_20d", "sector_corr_20d",
+  "hyg_return_20d", "tlt_return_20d", "credit_spread_change_20d",
+  "hyg_spy_divergence", "vix_9d_ratio",
+  "industry_commodity_corr_20d", "industry_commodity_return_20d",
+  "copper_gold_ratio_change", "btc_change_20d",
 ] as const;
 
 export interface OHLCV {
@@ -79,7 +88,61 @@ export interface MacroData {
   gold?: number[];      // Gold close
   oil?: number[];       // Oil close
   spy?: number[];       // SPY close (for relative strength features)
+  sectorEtf?: number[]; // Sector ETF close (per-stock mapped: XLK, XLF, XLV, etc.)
+  hyg?: number[];       // HYG (high yield corporate bond ETF)
+  tlt?: number[];       // TLT (20+ year treasury bond ETF)
+  vix9d?: number[];     // 9-day VIX (ultra-short-term fear)
+  industryCommodity?: number[];  // Industry-specific commodity (per-stock mapped)
+  copper?: number[];    // HG=F copper futures
+  btc?: number[];       // BTC-USD bitcoin
 }
+
+/**
+ * Maps each stock to its GICS sector ETF for relative performance features.
+ * Uses SPDR Select Sector ETFs (XLK, XLF, XLV, XLE, XLI, XLY, XLP, XLC, XLB, XLU, XLRE).
+ */
+export const SECTOR_ETF_MAP: Record<string, string> = {
+  // Technology
+  AAPL: "XLK", MSFT: "XLK", NVDA: "XLK", AVGO: "XLK", ORCL: "XLK", CRM: "XLK",
+  AMD: "XLK", INTC: "XLK", QCOM: "XLK", ADBE: "XLK", CSCO: "XLK", IBM: "XLK",
+  TXN: "XLK", NOW: "XLK", AMAT: "XLK", MU: "XLK", LRCX: "XLK", KLAC: "XLK",
+  SNPS: "XLK", CDNS: "XLK", PANW: "XLK", CRWD: "XLK", FTNT: "XLK", PYPL: "XLK",
+  // Communication Services
+  GOOGL: "XLC", META: "XLC", NFLX: "XLC", DIS: "XLC",
+  // Consumer Discretionary
+  AMZN: "XLY", TSLA: "XLY", MCD: "XLY", NKE: "XLY", SBUX: "XLY",
+  TGT: "XLY", HD: "XLY", LOW: "XLY", ABNB: "XLY", UBER: "XLY",
+  // Finance
+  JPM: "XLF", V: "XLF", MA: "XLF", BAC: "XLF", WFC: "XLF", GS: "XLF",
+  MS: "XLF", AXP: "XLF", BLK: "XLF", SCHW: "XLF", C: "XLF", SQ: "XLF", COIN: "XLF",
+  // Healthcare
+  JNJ: "XLV", UNH: "XLV", LLY: "XLV", PFE: "XLV", ABBV: "XLV", MRK: "XLV",
+  TMO: "XLV", ABT: "XLV", DHR: "XLV", BMY: "XLV", AMGN: "XLV",
+  // Consumer Staples
+  PG: "XLP", KO: "XLP", PEP: "XLP", COST: "XLP", WMT: "XLP",
+  // Energy
+  XOM: "XLE", CVX: "XLE", COP: "XLE", SLB: "XLE", EOG: "XLE",
+  // Industrials
+  CAT: "XLI", DE: "XLI", HON: "XLI", UNP: "XLI", RTX: "XLI",
+  BA: "XLI", GE: "XLI", LMT: "XLI", MMM: "XLI",
+  // ETFs — map to themselves or closest sector
+  SPY: "SPY", QQQ: "XLK", IWM: "IWM", DIA: "DIA",
+  XLF: "XLF", XLE: "XLE", XLK: "XLK", XLV: "XLV", XBI: "XLV",
+};
+
+/**
+ * Maps stocks to industry-specific commodities for correlation features.
+ * Only stocks with strong commodity sensitivity are mapped.
+ */
+export const INDUSTRY_COMMODITY_MAP: Record<string, string> = {
+  // Energy → Natural Gas (NG=F)
+  XOM: "NG=F", CVX: "NG=F", COP: "NG=F", SLB: "NG=F", EOG: "NG=F", XLE: "NG=F",
+  // Industrials → Copper (HG=F)
+  CAT: "HG=F", DE: "HG=F", HON: "HG=F", UNP: "HG=F", RTX: "HG=F",
+  BA: "HG=F", GE: "HG=F", LMT: "HG=F", MMM: "HG=F", XLI: "HG=F",
+  // Crypto-exposed → Bitcoin (BTC-USD)
+  COIN: "BTC-USD", SQ: "BTC-USD", PYPL: "BTC-USD",
+};
 
 // ── Helper functions ──
 
@@ -202,8 +265,8 @@ function linearSlope(arr: number[]): number {
 }
 
 /**
- * Compute 108 features for each day of the OHLCV array.
- * Returns a 2D array: [numDays][108]
+ * Compute 120 features for each day of the OHLCV array.
+ * Returns a 2D array: [numDays][120]
  * Days with insufficient warmup data get 0-filled features.
  */
 export function computeITransformerFeatures(
@@ -356,6 +419,24 @@ export function computeITransformerFeatures(
       ? 0 : Math.log((volume[i] + 1) / (volume[i - 1] + 1)));
   }
 
+  // Sector ETF log returns (for sector relative strength)
+  const sectorLogRet: number[] = [];
+  if (macro?.sectorEtf) {
+    for (let i = 0; i < n; i++) {
+      sectorLogRet.push(i === 0 || !macro.sectorEtf[i - 1] || macro.sectorEtf[i - 1] <= 0
+        ? 0 : Math.log(macro.sectorEtf[i] / macro.sectorEtf[i - 1]));
+    }
+  }
+
+  // Industry commodity log returns
+  const commodityLogRet: number[] = [];
+  if (macro?.industryCommodity) {
+    for (let i = 0; i < n; i++) {
+      commodityLogRet.push(i === 0 || !macro.industryCommodity[i - 1] || macro.industryCommodity[i - 1] <= 0
+        ? 0 : Math.log(macro.industryCommodity[i] / macro.industryCommodity[i - 1]));
+    }
+  }
+
   // True Range for ATR ratio
   const tr: number[] = [];
   for (let i = 0; i < n; i++) {
@@ -431,7 +512,7 @@ export function computeITransformerFeatures(
   const result: number[][] = [];
 
   for (let i = 0; i < n; i++) {
-    const row: number[] = new Array(108).fill(0);
+    const row: number[] = new Array(120).fill(0);
     const c = close[i];
     const dt = dates[i];
 
@@ -865,8 +946,76 @@ export function computeITransformerFeatures(
       row[107] = dxyChg * vixChg * 100;
     }
 
+    // ── 108-110: Sector ETF Relative Strength ──
+    if (macro?.sectorEtf) {
+      if (i >= 5 && macro.sectorEtf[i - 5] > 0) {
+        const stockRet5 = (close[i] - close[i - 5]) / close[i - 5];
+        const sectorRet5 = (macro.sectorEtf[i] - macro.sectorEtf[i - 5]) / macro.sectorEtf[i - 5];
+        row[108] = stockRet5 - sectorRet5;
+      }
+      if (i >= 20 && macro.sectorEtf[i - 20] > 0) {
+        const stockRet20 = (close[i] - close[i - 20]) / close[i - 20];
+        const sectorRet20 = (macro.sectorEtf[i] - macro.sectorEtf[i - 20]) / macro.sectorEtf[i - 20];
+        row[109] = stockRet20 - sectorRet20;
+      }
+      if (i >= 19 && sectorLogRet.length > 0) {
+        const corrSector = rollingCorr(logRet, sectorLogRet, 20);
+        row[110] = corrSector[i] ?? 0;
+      }
+    }
+
+    // ── 111-114: Credit Market Signals ──
+    if (macro?.hyg && i >= 20 && macro.hyg[i - 20] > 0) {
+      row[111] = (macro.hyg[i] - macro.hyg[i - 20]) / macro.hyg[i - 20];
+    }
+    if (macro?.tlt && i >= 20 && macro.tlt[i - 20] > 0) {
+      row[112] = (macro.tlt[i] - macro.tlt[i - 20]) / macro.tlt[i - 20];
+    }
+    // Credit spread proxy: HYG/TLT ratio change (rising = risk-on, falling = risk-off)
+    if (macro?.hyg && macro?.tlt && i >= 20) {
+      const hygTltNow = macro.hyg[i] / (macro.tlt[i] + 1e-10);
+      const hygTltPrev = macro.hyg[i - 20] / (macro.tlt[i - 20] + 1e-10);
+      if (hygTltPrev > 0) row[113] = (hygTltNow - hygTltPrev) / hygTltPrev;
+    }
+    // HYG-SPY divergence (risk appetite check)
+    if (macro?.hyg && macro?.spy && i >= 20 && macro.hyg[i - 20] > 0 && macro.spy[i - 20] > 0) {
+      const hygRet = (macro.hyg[i] - macro.hyg[i - 20]) / macro.hyg[i - 20];
+      const spyRet = (macro.spy[i] - macro.spy[i - 20]) / macro.spy[i - 20];
+      row[114] = hygRet - spyRet;
+    }
+
+    // ── 115: VIX 9-Day Term Structure ──
+    if (macro?.vix9d && macro?.vix && macro.vix[i] > 0 && macro.vix9d[i] > 0) {
+      row[115] = macro.vix9d[i] / macro.vix[i];
+    } else {
+      row[115] = 1.0; // neutral default
+    }
+
+    // ── 116-117: Industry Commodity Sensitivity ──
+    if (macro?.industryCommodity) {
+      if (i >= 19 && commodityLogRet.length > 0) {
+        const corrCom = rollingCorr(logRet, commodityLogRet, 20);
+        row[116] = corrCom[i] ?? 0;
+      }
+      if (i >= 20 && macro.industryCommodity[i - 20] > 0) {
+        row[117] = (macro.industryCommodity[i] - macro.industryCommodity[i - 20]) / macro.industryCommodity[i - 20];
+      }
+    }
+
+    // ── 118: Copper/Gold Ratio Change (economic health proxy) ──
+    if (macro?.copper && macro?.gold && i >= 20) {
+      const cuAuNow = macro.copper[i] / (macro.gold[i] + 1e-10);
+      const cuAuPrev = macro.copper[i - 20] / (macro.gold[i - 20] + 1e-10);
+      if (cuAuPrev > 0) row[118] = (cuAuNow - cuAuPrev) / cuAuPrev;
+    }
+
+    // ── 119: Bitcoin Sentiment (risk-on indicator) ──
+    if (macro?.btc && i >= 20 && macro.btc[i - 20] > 0) {
+      row[119] = (macro.btc[i] - macro.btc[i - 20]) / macro.btc[i - 20];
+    }
+
     // Replace NaN/Infinity
-    for (let f = 0; f < 108; f++) {
+    for (let f = 0; f < 120; f++) {
       if (!isFinite(row[f])) row[f] = 0;
     }
 

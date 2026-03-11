@@ -164,7 +164,7 @@ Standard Transformers treat time steps as tokens. iTransformer **inverts** this 
 
 Config: `d_model=128, n_heads=8, n_layers=3, d_ff=256, dropout=0.15`
 
-### Feature Engineering (108 features)
+### Feature Engineering (120 features)
 
 Features computed in both Python (notebook) and TypeScript (website) — must stay synchronized:
 
@@ -188,14 +188,29 @@ Features computed in both Python (notebook) and TypeScript (website) — must st
 | Trend | 5 | Price slopes, Ichimoku, up/down ratios | OHLCV |
 | Moments | 4 | Skewness/kurtosis 20/60d | OHLCV |
 | Vol Regime | 2 | Vol expansion ratio, vol expanding flag | OHLCV |
+| Sector ETF Relative | 3 | Stock vs sector ETF returns (5/20d), sector correlation | Sector ETFs |
+| Credit Market | 4 | HYG/TLT returns, credit spread proxy, HYG-SPY divergence | HYG, TLT |
+| VIX Term Structure | 1 | VIX9D/VIX short-term fear ratio | ^VIX9D |
+| Industry Commodity | 2 | Per-stock commodity correlation and return | NG=F, HG=F, BTC-USD |
+| Intermarket Extended | 2 | Copper/gold ratio change, BTC sentiment | HG=F, BTC-USD |
 
 **Macro data sources:**
 - `^VIX`, `^VIX3M` — VIX term structure (contango/backwardation signals risk appetite)
+- `^VIX9D` — 9-day VIX (ultra-short-term fear, VIX9D/VIX ratio signals panic spikes)
 - `^TNX` — 10-year Treasury yield (rate sensitivity, growth vs value rotation)
 - `DX-Y.NYB` — US Dollar Index (inverse correlation with equities for many sectors)
 - `GC=F` — Gold futures (risk-off indicator)
 - `CL=F` — Crude Oil futures (energy sector driver, inflation proxy)
 - `SPY` — S&P 500 ETF (market benchmark for relative strength features)
+- `HYG` — iShares High Yield Corporate Bond ETF (credit appetite signal)
+- `TLT` — iShares 20+ Year Treasury Bond ETF (flight to safety signal)
+- `HG=F` — Copper futures (economic health indicator, copper/gold ratio)
+- `BTC-USD` — Bitcoin (risk-on sentiment, fintech sector driver)
+- `NG=F` — Natural Gas futures (energy sector commodity, via industry mapping)
+
+**Per-stock mappings:**
+- `SECTOR_ETF_MAP` — Maps each stock to its GICS sector ETF (XLK, XLF, XLV, XLE, XLI, XLY, XLP, XLC). Sector-relative features capture whether a stock is outperforming/underperforming its peers, independent of broad market moves.
+- `INDUSTRY_COMMODITY_MAP` — Maps energy stocks to NG=F, industrials to HG=F, fintech to BTC-USD. Only stocks with strong commodity sensitivity are mapped; unmapped stocks get 0-filled commodity features.
 
 ### Prediction Horizons
 
@@ -249,6 +264,7 @@ iTransformer predictions validate the scoring model's recommendations:
 3. **H3: iTransformer concordance predicts put profitability** — Puts where scoring and iTransformer agree have higher simulated win rates. Test on historical data.
 4. **H4: Feature selection beats all-features** — Top-K features by mutual information outperform full feature set. Test via training comparison.
 5. **H5: Relative strength + regime features improve tail accuracy** — The 25 new v5.0 features (relative strength, advanced volume, regime detection, intermarket) should improve predictions for stocks with the worst v4.0 accuracy (AMAT, INTC, PANW at ~52-55%) by providing market context that OHLCV alone misses.
+6. **H6: Credit/sector/commodity features improve sector-specific accuracy** — The 12 v6.0 features (sector ETF relative strength, credit market signals, industry commodities) should improve predictions for sector-sensitive stocks (energy, financials, industrials) by capturing sector rotation, credit conditions, and commodity sensitivity that broad market indicators miss.
 
 ### Modifying the ML Pipeline
 
