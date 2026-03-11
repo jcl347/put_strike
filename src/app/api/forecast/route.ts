@@ -7,6 +7,7 @@ import {
   type OHLCV,
   type MacroData,
 } from "@/lib/itransformer-features";
+import { fetchFredMacroData, type FredMacroData } from "@/lib/fred";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -34,10 +35,11 @@ export async function GET(request: NextRequest) {
   const industryCommoditySymbol = INDUSTRY_COMMODITY_MAP[upperSymbol];
 
   try {
-    // Fetch OHLCV (1 year) + macro data in parallel
-    const [ohlcv, rawMacro] = await Promise.all([
+    // Fetch OHLCV (1 year) + macro data + FRED data in parallel
+    const [ohlcv, rawMacro, fredData] = await Promise.all([
       fetchOHLCV(upperSymbol, 1),
       fetchMacroDataWithDates(sectorEtfSymbol, industryCommoditySymbol),
+      fetchFredMacroData(),
     ]);
 
     if (ohlcv.length < 70) {
@@ -50,7 +52,7 @@ export async function GET(request: NextRequest) {
     // Align macro data to stock dates using forward-fill
     // This matches the Python training: macro_df.reindex(df.index, method="ffill")
     const stockDates = ohlcv.map(d => d.date);
-    const macroData = alignMacroToStockDates(rawMacro, stockDates);
+    const macroData = alignMacroToStockDates(rawMacro, stockDates, fredData);
 
     // Compute 120 features for all available days
     const rawFeatures = computeITransformerFeatures(ohlcv, macroData);
@@ -64,7 +66,7 @@ export async function GET(request: NextRequest) {
       featureMatrix = normalizeFeatures(rawFeatures, normStats.mean, normStats.std);
     } else {
       // Fallback: z-score normalize using the window's own stats
-      const numFeatures = rawFeatures[0]?.length ?? 120;
+      const numFeatures = rawFeatures[0]?.length ?? 126;
       const mean = new Array(numFeatures).fill(0);
       const std = new Array(numFeatures).fill(0);
       for (let j = 0; j < numFeatures; j++) {
@@ -248,7 +250,8 @@ async function fetchMacroDataWithDates(
  */
 function alignMacroToStockDates(
   rawMacro: RawMacroData,
-  stockDates: string[]
+  stockDates: string[],
+  fredData?: FredMacroData
 ): MacroData {
   const aligned: MacroData = {};
 
@@ -289,6 +292,16 @@ function alignMacroToStockDates(
   aligned.industryCommodity = forwardFillAlign(rawMacro.industryCommodity);
   aligned.copper = forwardFillAlign(rawMacro.copper);
   aligned.btc = forwardFillAlign(rawMacro.btc);
+
+  // FRED macro data alignment
+  if (fredData) {
+    aligned.fredHySpread = forwardFillAlign(fredData.hySpread);
+    aligned.fredYieldCurve = forwardFillAlign(fredData.yieldCurve);
+    aligned.fredBreakeven = forwardFillAlign(fredData.breakeven);
+    aligned.fredTreasury2y = forwardFillAlign(fredData.treasury2y);
+    aligned.fredJoblessClaims = forwardFillAlign(fredData.joblessClaims);
+    aligned.fredConsumerSentiment = forwardFillAlign(fredData.consumerSentiment);
+  }
 
   return aligned;
 }

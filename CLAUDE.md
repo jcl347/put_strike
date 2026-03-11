@@ -138,7 +138,7 @@ The iTransformer pipeline:
 - **Inference**: Website downloads per-stock ONNX model on demand, runs via onnxruntime-web (WASM)
 - **ONNX Export**: Uses legacy TorchScript exporter (`dynamo=False`) with `dynamic_axes` — dynamo exporter incompatible with RevIN architecture
 - **No Colab dependency at runtime** — models are self-contained on HF
-- **Secrets**: HF_TOKEN and HF_REPO_ID loaded via Colab Secrets (key icon in sidebar)
+- **Secrets**: HF_TOKEN, HF_REPO_ID, and FRED_API_KEY loaded via Colab Secrets (key icon in sidebar)
 
 ### Training Strategy
 
@@ -164,7 +164,7 @@ Standard Transformers treat time steps as tokens. iTransformer **inverts** this 
 
 Config: `d_model=128, n_heads=8, n_layers=3, d_ff=256, dropout=0.15`
 
-### Feature Engineering (120 features)
+### Feature Engineering (126 features)
 
 Features computed in both Python (notebook) and TypeScript (website) — must stay synchronized:
 
@@ -193,6 +193,7 @@ Features computed in both Python (notebook) and TypeScript (website) — must st
 | VIX Term Structure | 1 | VIX9D/VIX short-term fear ratio | ^VIX9D |
 | Industry Commodity | 2 | Per-stock commodity correlation and return | NG=F, HG=F, BTC-USD |
 | Intermarket Extended | 2 | Copper/gold ratio change, BTC sentiment | HG=F, BTC-USD |
+| FRED Macro | 6 | HY credit spread, yield curve, breakeven inflation, 2Y yield, jobless claims z-score, consumer sentiment change | FRED API |
 
 **Macro data sources:**
 - `^VIX`, `^VIX3M` — VIX term structure (contango/backwardation signals risk appetite)
@@ -207,6 +208,14 @@ Features computed in both Python (notebook) and TypeScript (website) — must st
 - `HG=F` — Copper futures (economic health indicator, copper/gold ratio)
 - `BTC-USD` — Bitcoin (risk-on sentiment, fintech sector driver)
 - `NG=F` — Natural Gas futures (energy sector commodity, via industry mapping)
+
+**FRED API data sources** (requires `FRED_API_KEY` env var):
+- `BAMLH0A0HYM2` — ICE BofA US High Yield OAS (credit spread level, risk appetite)
+- `T10Y2Y` — 10-Year minus 2-Year Treasury yield curve (inversion = recession signal)
+- `T10YIE` — 10-Year Breakeven Inflation Rate (inflation expectations)
+- `DGS2` — 2-Year Treasury Constant Maturity Rate (short-term rate expectations)
+- `ICSA` — Initial Jobless Claims, weekly (labor market health, z-scored over 20d)
+- `UMCSENT` — University of Michigan Consumer Sentiment, monthly (consumer confidence, 20d pct change)
 
 **Per-stock mappings:**
 - `SECTOR_ETF_MAP` — Maps each stock to its GICS sector ETF (XLK, XLF, XLV, XLE, XLI, XLY, XLP, XLC). Sector-relative features capture whether a stock is outperforming/underperforming its peers, independent of broad market moves.
@@ -265,12 +274,13 @@ iTransformer predictions validate the scoring model's recommendations:
 4. **H4: Feature selection beats all-features** — Top-K features by mutual information outperform full feature set. Test via training comparison.
 5. **H5: Relative strength + regime features improve tail accuracy** — The 25 new v5.0 features (relative strength, advanced volume, regime detection, intermarket) should improve predictions for stocks with the worst v4.0 accuracy (AMAT, INTC, PANW at ~52-55%) by providing market context that OHLCV alone misses.
 6. **H6: Credit/sector/commodity features improve sector-specific accuracy** — The 12 v6.0 features (sector ETF relative strength, credit market signals, industry commodities) should improve predictions for sector-sensitive stocks (energy, financials, industrials) by capturing sector rotation, credit conditions, and commodity sensitivity that broad market indicators miss.
+7. **H7: FRED macro indicators improve regime-change predictions** — The 6 v7.0 FRED features (HY spread, yield curve, breakeven inflation, 2Y yield, jobless claims, consumer sentiment) should improve predictions during macro regime changes (rate hikes, credit stress, recession signals) by providing direct economic data that market-derived proxies (VIX, HYG/TLT) may lag.
 
 ### Modifying the ML Pipeline
 
-- **Colab secrets**: Add `HF_TOKEN` and `HF_REPO_ID` via the Secrets panel (key icon) in Colab
+- **Colab secrets**: Add `HF_TOKEN`, `HF_REPO_ID`, and `FRED_API_KEY` via the Secrets panel (key icon) in Colab
 - **Training config**: Edit Cell 3 of `colab/train_itransformer.ipynb`
-- **Feature engineering**: Edit `compute_features()` in the notebook AND `src/lib/itransformer-features.ts` (must stay in sync). Also update `src/app/api/forecast/route.ts` macro tickers if adding new data sources
+- **Feature engineering**: Edit `compute_features()` in the notebook AND `src/lib/itransformer-features.ts` (must stay in sync). Also update `src/app/api/forecast/route.ts` macro tickers if adding new data sources. FRED features also require `src/lib/fred.ts` updates
 - **Model architecture**: Edit the `iTransformer` class in notebook Cell 6
 - **Website inference**: Edit `src/lib/hf-model.ts`
 - **ONNX export**: Uses the legacy TorchScript exporter (`dynamo=False`) with `dynamic_axes` because the dynamo exporter (`torch.export.export`) fails on RevIN's dynamic buffer reassignment and string `mode` parameter. Requires `onnxscript` pip package (PyTorch ONNX infrastructure dependency). The `TransformerEncoder` uses `enable_nested_tensor=False` to suppress warnings when `norm_first=True`.

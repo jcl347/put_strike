@@ -1,11 +1,11 @@
 /**
  * iTransformer Feature Engineering — Server-Side
  *
- * Computes the exact 120 features used to train the iTransformer model.
+ * Computes the exact 126 features used to train the iTransformer model.
  * Must stay in sync with compute_features() in colab/train_itransformer.ipynb.
  *
  * Input: OHLCV daily data (need 260+ days for warmup)
- * Output: (numDays, 120) feature matrix for the available days
+ * Output: (numDays, 126) feature matrix for the available days
  *
  * Features 0-82: Original technicals + macro (SMA/EMA, RSI, MACD, BB, ATR,
  *   volume, stochastic, ROC, CCI, Aroon, returns, volatility, moments,
@@ -19,6 +19,8 @@
  * Features 108-119: Industry/sector/credit features — sector ETF relative
  *   strength, credit market signals (HYG/TLT), VIX9D term structure,
  *   industry commodity sensitivity, copper/gold ratio, BTC sentiment
+ * Features 120-125: FRED macro features — HY credit spread, yield curve,
+ *   breakeven inflation, 2Y Treasury, jobless claims, consumer sentiment
  */
 
 export const FEATURE_NAMES = [
@@ -69,6 +71,9 @@ export const FEATURE_NAMES = [
   "hyg_spy_divergence", "vix_9d_ratio",
   "industry_commodity_corr_20d", "industry_commodity_return_20d",
   "copper_gold_ratio_change", "btc_change_20d",
+  // FRED macro features (120-125)
+  "fred_hy_spread", "fred_yield_curve", "fred_breakeven_inflation",
+  "fred_2y_yield", "fred_jobless_claims_zscore", "fred_consumer_sentiment_change",
 ] as const;
 
 export interface OHLCV {
@@ -95,6 +100,13 @@ export interface MacroData {
   industryCommodity?: number[];  // Industry-specific commodity (per-stock mapped)
   copper?: number[];    // HG=F copper futures
   btc?: number[];       // BTC-USD bitcoin
+  // FRED macro series (forward-filled daily values)
+  fredHySpread?: number[];       // BAMLH0A0HYM2 HY OAS credit spread
+  fredYieldCurve?: number[];     // T10Y2Y 10Y-2Y yield curve
+  fredBreakeven?: number[];      // T10YIE 10Y breakeven inflation
+  fredTreasury2y?: number[];     // DGS2 2-year Treasury yield
+  fredJoblessClaims?: number[];  // ICSA initial jobless claims
+  fredConsumerSentiment?: number[]; // UMCSENT UMich consumer sentiment
 }
 
 /**
@@ -265,8 +277,8 @@ function linearSlope(arr: number[]): number {
 }
 
 /**
- * Compute 120 features for each day of the OHLCV array.
- * Returns a 2D array: [numDays][120]
+ * Compute 126 features for each day of the OHLCV array.
+ * Returns a 2D array: [numDays][126]
  * Days with insufficient warmup data get 0-filled features.
  */
 export function computeITransformerFeatures(
@@ -512,7 +524,7 @@ export function computeITransformerFeatures(
   const result: number[][] = [];
 
   for (let i = 0; i < n; i++) {
-    const row: number[] = new Array(120).fill(0);
+    const row: number[] = new Array(126).fill(0);
     const c = close[i];
     const dt = dates[i];
 
@@ -1014,8 +1026,33 @@ export function computeITransformerFeatures(
       row[119] = (macro.btc[i] - macro.btc[i - 20]) / macro.btc[i - 20];
     }
 
+    // ── 120-125: FRED Macro Features ──
+    if (macro?.fredHySpread && macro.fredHySpread[i] > 0) {
+      row[120] = macro.fredHySpread[i]; // HY OAS spread level (typically 3-10%)
+    }
+    if (macro?.fredYieldCurve) {
+      row[121] = macro.fredYieldCurve[i] ?? 0; // 10Y-2Y spread (can be negative = inversion)
+    }
+    if (macro?.fredBreakeven && macro.fredBreakeven[i] > 0) {
+      row[122] = macro.fredBreakeven[i]; // breakeven inflation rate
+    }
+    if (macro?.fredTreasury2y && macro.fredTreasury2y[i] > 0) {
+      row[123] = macro.fredTreasury2y[i]; // 2Y yield level
+    }
+    // Jobless claims: z-score over 20-day window (weekly data forward-filled to daily)
+    if (macro?.fredJoblessClaims && i >= 19) {
+      const claimsWindow = macro.fredJoblessClaims.slice(i - 19, i + 1);
+      const claimsMean = claimsWindow.reduce((s, v) => s + v, 0) / 20;
+      const claimsStd = Math.sqrt(claimsWindow.reduce((s, v) => s + (v - claimsMean) ** 2, 0) / 20) + 1e-10;
+      row[124] = (macro.fredJoblessClaims[i] - claimsMean) / claimsStd;
+    }
+    // Consumer sentiment: 20-day change (monthly data forward-filled)
+    if (macro?.fredConsumerSentiment && i >= 20 && macro.fredConsumerSentiment[i] > 0 && macro.fredConsumerSentiment[i - 20] > 0) {
+      row[125] = (macro.fredConsumerSentiment[i] - macro.fredConsumerSentiment[i - 20]) / macro.fredConsumerSentiment[i - 20];
+    }
+
     // Replace NaN/Infinity
-    for (let f = 0; f < 120; f++) {
+    for (let f = 0; f < 126; f++) {
       if (!isFinite(row[f])) row[f] = 0;
     }
 
