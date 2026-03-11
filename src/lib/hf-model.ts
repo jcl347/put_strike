@@ -1,8 +1,12 @@
 /**
  * HuggingFace ONNX Model Loader for iTransformer — CLIENT-SIDE
  *
- * Downloads and caches the ONNX model from HuggingFace Hub,
+ * Downloads and caches ONNX models from HuggingFace Hub,
  * then runs inference in the browser using onnxruntime-web (WASM).
+ *
+ * Supports two model tiers:
+ * 1. Per-stock models (per_stock/{SYMBOL}.onnx) — trained on individual stock data
+ * 2. Universal model (itransformer.onnx) — trained on all stocks (fallback)
  *
  * This avoids the 250 MB Vercel serverless function limit since
  * onnxruntime-web runs in the browser, not on the server.
@@ -46,6 +50,23 @@ interface ModelConfig {
   };
   normalization_stats: Record<string, { mean: number[]; std: number[] }>;
   onnx_size_mb: number;
+}
+
+interface PerStockConfig {
+  per_stock_metrics: Record<
+    string,
+    {
+      mse: number;
+      mae: number;
+      dir_acc_7d: number;
+      dir_acc_14d: number;
+      dir_acc_30d: number;
+      dir_acc_60d: number;
+      num_samples: number;
+      onnx_size_mb: number;
+    }
+  >;
+  failed_stocks: string[];
 }
 
 export interface HFPrediction {
@@ -98,19 +119,63 @@ export function getTrainedSymbols(): string[] {
   return modelConfig?.training?.symbols ?? [];
 }
 
-// Singleton state for browser-side model
+// Singleton state for browser-side models
 let ort: any = null;
-let session: any = null;
+let universalSession: any = null;
 let modelConfig: ModelConfig | null = null;
+let perStockConfig: PerStockConfig | null = null;
 let loadPromise: Promise<boolean> | null = null;
 
+// Per-stock session cache: symbol -> ONNX session
+const perStockSessions: Map<string, any> = new Map();
+// Track symbols we've already tried (and failed) to load per-stock models for
+const perStockAttempted: Set<string> = new Set();
+
 /**
- * Load the ONNX model and config from HuggingFace Hub.
+ * Create an ONNX session from a model URL, handling external data files.
+ */
+async function createOnnxSession(
+  modelUrl: string
+): Promise<any | null> {
+  const modelRes = await fetch(modelUrl);
+  if (!modelRes.ok) return null;
+  const modelBuffer = await modelRes.arrayBuffer();
+
+  // Try fetching external data file
+  let externalData: ArrayBuffer | null = null;
+  try {
+    const extRes = await fetch(`${modelUrl}.data`);
+    if (extRes.ok) {
+      externalData = await extRes.arrayBuffer();
+      console.log(
+        `[hf-model] External data loaded (${(externalData.byteLength / 1024 / 1024).toFixed(1)} MB)`
+      );
+    }
+  } catch {
+    // No external data file — model is self-contained
+  }
+
+  const sessionOptions: any = { executionProviders: ["wasm"] };
+  if (externalData) {
+    const dataFileName = modelUrl.split("/").pop() + ".data";
+    sessionOptions.externalData = [
+      { path: dataFileName, data: new Uint8Array(externalData) },
+    ];
+  }
+
+  return ort.InferenceSession.create(
+    new Uint8Array(modelBuffer),
+    sessionOptions
+  );
+}
+
+/**
+ * Load the universal ONNX model, config, and per-stock config from HuggingFace Hub.
  * Runs in the browser using onnxruntime-web (WASM backend).
  * Caches the session — only downloads once per page lifecycle.
  */
 async function ensureModelLoaded(): Promise<boolean> {
-  if (session && modelConfig) return true;
+  if (universalSession && modelConfig) return true;
   if (typeof window === "undefined") return false; // Server-side: skip
 
   if (loadPromise) return loadPromise;
@@ -137,51 +202,40 @@ async function ensureModelLoaded(): Promise<boolean> {
         `[hf-model] Config loaded: ${modelConfig.num_features} features, ${modelConfig.forecast_horizon}d horizon, ${modelConfig.training?.num_stocks ?? "?"} stocks`
       );
 
-      // Fetch ONNX model binary
-      const modelRes = await fetch(`${HF_BASE}/itransformer.onnx`);
-      if (!modelRes.ok) {
-        lastError = `ONNX model fetch failed: HTTP ${modelRes.status}`;
-        console.error(`[hf-model] ${lastError}`);
-        return false;
-      }
-      const modelBuffer = await modelRes.arrayBuffer();
-
-      // Fetch external data file if it exists (large models store tensors separately)
-      let externalData: ArrayBuffer | null = null;
+      // Fetch per-stock config (non-blocking — it's optional)
       try {
-        const extRes = await fetch(`${HF_BASE}/itransformer.onnx.data`);
-        if (extRes.ok) {
-          externalData = await extRes.arrayBuffer();
+        const psRes = await fetch(
+          `${HF_BASE}/per_stock/per_stock_config.json`
+        );
+        if (psRes.ok) {
+          perStockConfig = (await psRes.json()) as PerStockConfig;
+          const numPerStock = Object.keys(
+            perStockConfig.per_stock_metrics
+          ).length;
           console.log(
-            `[hf-model] External data loaded (${(externalData.byteLength / 1024 / 1024).toFixed(1)} MB)`
+            `[hf-model] Per-stock config loaded: ${numPerStock} individual models available`
           );
         }
       } catch {
-        // No external data file — model is self-contained
+        // Per-stock config not available — universal only
       }
 
-      // Create ONNX session with WASM backend
-      const sessionOptions: any = { executionProviders: ["wasm"] };
-      if (externalData) {
-        sessionOptions.externalData = [
-          {
-            path: "itransformer.onnx.data",
-            data: new Uint8Array(externalData),
-          },
-        ];
+      // Load universal ONNX model
+      universalSession = await createOnnxSession(
+        `${HF_BASE}/itransformer.onnx`
+      );
+      if (!universalSession) {
+        lastError = "ONNX universal model fetch failed";
+        console.error(`[hf-model] ${lastError}`);
+        return false;
       }
-      session = await ort.InferenceSession.create(
-        new Uint8Array(modelBuffer),
-        sessionOptions
-      );
-      console.log(
-        `[hf-model] ONNX session ready (${(modelBuffer.byteLength / 1024 / 1024).toFixed(1)} MB, WASM)`
-      );
+
+      console.log("[hf-model] Universal ONNX session ready (WASM)");
       return true;
     } catch (err) {
       lastError = `Model load failed: ${err instanceof Error ? err.message : String(err)}`;
       console.error(`[hf-model] ${lastError}`);
-      session = null;
+      universalSession = null;
       modelConfig = null;
       return false;
     }
@@ -191,7 +245,46 @@ async function ensureModelLoaded(): Promise<boolean> {
 }
 
 /**
+ * Try to load a per-stock model. Returns the session if available, null otherwise.
+ * Caches results — only attempts each symbol once.
+ */
+async function getPerStockSession(symbol: string): Promise<any | null> {
+  const upper = symbol.toUpperCase();
+
+  // Return cached session if available
+  if (perStockSessions.has(upper)) return perStockSessions.get(upper);
+
+  // Don't retry symbols we've already tried
+  if (perStockAttempted.has(upper)) return null;
+  perStockAttempted.add(upper);
+
+  // Check if per-stock config says this symbol has a model
+  if (
+    perStockConfig &&
+    !perStockConfig.per_stock_metrics[upper]
+  ) {
+    return null;
+  }
+
+  try {
+    const session = await createOnnxSession(
+      `${HF_BASE}/per_stock/${upper}.onnx`
+    );
+    if (session) {
+      perStockSessions.set(upper, session);
+      console.log(`[hf-model] Per-stock model loaded for ${upper}`);
+      return session;
+    }
+  } catch {
+    // Per-stock model not available for this symbol
+  }
+
+  return null;
+}
+
+/**
  * Run iTransformer inference in the browser.
+ * Tries per-stock model first, falls back to universal model.
  *
  * @param symbol - Stock ticker
  * @param currentPrice - Current stock price
@@ -203,7 +296,7 @@ export async function runHFInference(
   featureMatrix: number[][]
 ): Promise<HFPrediction | null> {
   const loaded = await ensureModelLoaded();
-  if (!loaded || !session || !modelConfig || !ort) return null;
+  if (!loaded || !universalSession || !modelConfig || !ort) return null;
 
   try {
     // Validate that this symbol was in the training set
@@ -214,6 +307,11 @@ export async function runHFInference(
       lastError = msg;
       return null;
     }
+
+    // Try per-stock model first, fall back to universal
+    const perStockSession = await getPerStockSession(symbol);
+    const activeSession = perStockSession || universalSession;
+    const modelType = perStockSession ? "per-stock" : "universal";
 
     const lookback = modelConfig.lookback;
     const numFeatures = modelConfig.num_features;
@@ -274,7 +372,7 @@ export async function runHFInference(
       lookback,
       numFeatures,
     ]);
-    const results = await session.run({ features: inputTensor });
+    const results = await activeSession.run({ features: inputTensor });
     const forecast = Array.from(results.forecast.data as Float32Array) as number[];
 
     // Validate forecast output
@@ -292,13 +390,20 @@ export async function runHFInference(
     const days = Array.from({ length: forecast.length }, (_, i) => i + 1);
     const diffusion = days.map((d) => dailyVol * Math.sqrt(d));
 
+    // Use per-stock test metrics when available for confidence score
+    const perStockMetrics =
+      perStockConfig?.per_stock_metrics?.[symbol.toUpperCase()];
+    const dirAcc30d = perStockSession && perStockMetrics
+      ? perStockMetrics.dir_acc_30d
+      : (modelConfig.test_metrics?.dir_acc_30d ?? 50);
+
     console.log(
-      `[hf-model] ${symbol}: inference complete, 60d return=${(forecast[59] * 100).toFixed(1)}%, trained=true`
+      `[hf-model] ${symbol}: inference complete (${modelType}), 60d return=${(forecast[59] * 100).toFixed(1)}%`
     );
 
     return {
       symbol,
-      model: "iTransformer",
+      model: perStockSession ? "iTransformer (per-stock)" : "iTransformer",
       model_version: "3.0",
       forecast_returns: forecast,
       predicted_prices: predictedPrices,
@@ -320,13 +425,13 @@ export async function runHFInference(
       },
       model_confidence: Math.max(
         0,
-        Math.min(1, (modelConfig.test_metrics?.dir_acc_30d ?? 50) / 100)
+        Math.min(1, dirAcc30d / 100)
       ),
       metadata: {
         num_features: modelConfig.num_features,
         lookback: modelConfig.lookback,
         architecture: modelConfig.architecture,
-        test_metrics: modelConfig.test_metrics,
+        test_metrics: perStockMetrics || modelConfig.test_metrics,
       },
     };
   } catch (err) {
@@ -375,4 +480,11 @@ export async function isModelAvailable(): Promise<boolean> {
 
 export function getModelConfig(): ModelConfig | null {
   return modelConfig;
+}
+
+/**
+ * Get per-stock config (metrics for individual stock models).
+ */
+export function getPerStockConfig(): PerStockConfig | null {
+  return perStockConfig;
 }
