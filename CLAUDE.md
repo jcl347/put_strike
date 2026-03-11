@@ -136,7 +136,7 @@ The iTransformer pipeline:
 - **Training**: Google Colab notebook (`colab/train_itransformer.ipynb`) trains on L4 GPU
 - **Storage**: Per-stock ONNX models + config pushed to HuggingFace Hub
 - **Inference**: Website downloads per-stock ONNX model on demand, runs via onnxruntime-web (WASM)
-- **ONNX Export**: Uses PyTorch's dynamo-based exporter with `onnxscript` and `dynamic_shapes` (not deprecated `dynamic_axes`)
+- **ONNX Export**: Uses legacy TorchScript exporter (`dynamo=False`) with `dynamic_axes` — dynamo exporter incompatible with RevIN architecture
 - **No Colab dependency at runtime** — models are self-contained on HF
 - **Secrets**: HF_TOKEN and HF_REPO_ID loaded via Colab Secrets (key icon in sidebar)
 
@@ -245,7 +245,7 @@ iTransformer predictions validate the scoring model's recommendations:
 - **Feature engineering**: Edit `compute_features()` in the notebook AND `src/lib/itransformer-features.ts` (must stay in sync)
 - **Model architecture**: Edit the `iTransformer` class in notebook Cell 6
 - **Website inference**: Edit `src/lib/hf-model.ts`
-- **ONNX export**: Uses `dynamic_shapes` with `torch.export.Dim` (not deprecated `dynamic_axes`). Requires `onnxscript` pip package for the dynamo ONNX translation pipeline. The `TransformerEncoderLayer` uses `enable_nested_tensor=False` to suppress warnings when `norm_first=True`.
+- **ONNX export**: Uses the legacy TorchScript exporter (`dynamo=False`) with `dynamic_axes` because the dynamo exporter (`torch.export.export`) fails on RevIN's dynamic buffer reassignment and string `mode` parameter. Requires `onnxscript` pip package (PyTorch ONNX infrastructure dependency). The `TransformerEncoder` uses `enable_nested_tensor=False` to suppress warnings when `norm_first=True`.
 
 ## Common Issues
 
