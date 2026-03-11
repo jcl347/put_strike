@@ -98,7 +98,7 @@ export default function HFModelStatus() {
                 {info.onnxSizeMb && <span>{info.onnxSizeMb.toFixed(1)} MB ONNX</span>}
               </div>
               <p className="text-green-600 mt-1">
-                Runs in-browser via onnxruntime-web (WASM). Per-stock model used when available, universal as fallback.
+                Runs in-browser via onnxruntime-web (WASM). Individual per-stock models loaded on demand.
               </p>
             </div>
           )}

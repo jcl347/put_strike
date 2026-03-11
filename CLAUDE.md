@@ -130,27 +130,27 @@ Always run `npx jest` after changes to verify model behavior (31 tests).
 
 PutStrike uses a two-tier prediction system:
 1. **Statistical Ensemble** (always available) — 6 CPU-based models in `src/lib/prediction.ts`, instant inference
-2. **iTransformer Deep Learning** (HuggingFace-hosted) — ONNX model trained on all 80+ screener stocks, loaded from HF Hub
+2. **iTransformer Deep Learning** (HuggingFace-hosted) — individual per-stock ONNX models loaded from HF Hub on demand
 
-The iTransformer replaces the Colab/ngrok architecture with a production-ready pipeline:
+The iTransformer pipeline:
 - **Training**: Google Colab notebook (`colab/train_itransformer.ipynb`) trains on L4 GPU
-- **Storage**: ONNX model + config pushed to HuggingFace Hub
-- **Inference**: Website downloads ONNX model from HF, runs via onnxruntime-web (WASM)
+- **Storage**: Per-stock ONNX models + config pushed to HuggingFace Hub
+- **Inference**: Website downloads per-stock ONNX model on demand, runs via onnxruntime-web (WASM)
 - **No Colab dependency at runtime** — models are self-contained on HF
+- **Secrets**: HF_TOKEN and HF_REPO_ID loaded via Colab Secrets (key icon in sidebar)
 
 ### Training Strategy
 
-**Universal model** trained on all 80+ SCREENER_SYMBOLS simultaneously:
-- Each stock contributes ~2,500 sliding window samples (10yr daily data × 60-day windows)
-- Total training corpus: ~200K samples across all stocks
+**Per-stock models** — one iTransformer trained per stock on that stock's data only:
+- Each stock has ~2,500 sliding window samples (10yr daily data × 60-day windows)
 - Walk-forward validation: 70% train / 15% val / 15% test (chronological, no look-ahead)
-- The model learns cross-stock patterns — features capture stock-specific characteristics (beta, market cap, vol regime)
+- Each model learns stock-specific feature interactions via cross-variate attention
 
-**Why universal over per-stock models:**
-- More training data → better generalization on tail events
-- Single model to deploy and maintain
-- Features encode stock identity (fundamental ratios, volatility regime, market cap category)
-- Avoids overfitting on limited per-stock history
+**Why per-stock over universal:**
+- Each stock has unique volatility characteristics, sector dynamics, and price patterns
+- Eliminates cross-stock contamination — a bank's patterns don't dilute a tech stock's model
+- ~2,500 samples per stock is sufficient for the iTransformer architecture (128-dim, 3 layers)
+- Individual models allow targeted retraining when a stock's regime changes
 
 ### Model Architecture (iTransformer — ICLR 2024, Liu et al.)
 
@@ -161,9 +161,9 @@ Standard Transformers treat time steps as tokens. iTransformer **inverts** this 
 - Shared output projection: `Linear(d_model → horizon=60)`
 - RevIN normalization (instance norm per window, reversed on output)
 
-Config: `d_model=128, n_heads=8, n_layers=3, d_ff=256, dropout=0.2`
+Config: `d_model=128, n_heads=8, n_layers=3, d_ff=256, dropout=0.15`
 
-### Feature Engineering (100+ features)
+### Feature Engineering (83 features)
 
 Features computed in both Python (notebook) and TypeScript (website) — must stay synchronized:
 
@@ -178,7 +178,7 @@ Features computed in both Python (notebook) and TypeScript (website) — must st
 | Calendar | Day of week, month cycle, OPEX week, quarter end | Date |
 | Returns | 1/5/10/20/60d log returns, drawdown, up/down ratios | OHLCV |
 
-**Additional data sources (added for universal model):**
+**Macro data sources:**
 - `^VIX`, `^VIX3M` — VIX term structure (contango/backwardation signals risk appetite)
 - `^TNX` — 10-year Treasury yield (rate sensitivity, growth vs value rotation)
 - `DX-Y.NYB` — US Dollar Index (inverse correlation with equities for many sectors)
@@ -206,16 +206,19 @@ For Long/Extended horizons beyond 60 trading days, confidence bands widen propor
 **Repository structure on HF Hub:**
 ```
 jcl347/putstrike/
-├── model.onnx              # ONNX model (~2-5MB)
-├── config.json             # Model config (dims, features, horizons)
-├── feature_names.json      # Ordered feature list (must match website)
-├── training_metadata.json  # Training metrics, stock universe, dates
-└── README.md               # Model card
+├── model_config.json              # Model config (dims, features, horizons, avg metrics)
+├── per_stock/
+│   ├── per_stock_config.json      # Per-stock metrics and training details
+│   ├── AAPL.onnx                  # Per-stock ONNX model (~1.5-2MB each)
+│   ├── MSFT.onnx
+│   └── ...                        # One .onnx per trained stock
+├── training_results.png           # Training visualization
+└── README.md                      # Model card
 ```
 
 **Website loading flow:**
-1. On first `/api/predict` call, download `model.onnx` from HF Hub
-2. Cache in module-level variable (persists across warm serverless invocations)
+1. On page load, download `model_config.json` and `per_stock/per_stock_config.json` from HF Hub
+2. When a stock is analyzed, download `per_stock/{SYMBOL}.onnx` on demand (cached after first load)
 3. Compute features from OHLCV + macro data (same pipeline as training)
 4. Run ONNX inference via `onnxruntime-web` (WASM backend, no native deps)
 5. Return predictions alongside statistical ensemble
@@ -229,18 +232,17 @@ iTransformer predictions validate the scoring model's recommendations:
 
 ### Hypotheses to Test
 
-1. **H1: Universal > per-stock** — Universal model trained on all stocks outperforms per-stock models on directional accuracy. Test by comparing held-out stock accuracy.
-2. **H2: Macro features improve predictions** — Adding VIX term structure, yields, dollar, gold, oil improves over OHLCV-only features. Test via ablation study.
-3. **H3: Longer lookback helps long horizons** — 120-day lookback improves 45-60d predictions vs 60-day lookback. Test by comparing horizon-specific accuracy.
-4. **H4: iTransformer concordance predicts put profitability** — Puts where scoring and iTransformer agree have higher simulated win rates. Test on historical data.
-5. **H5: Feature selection beats all-features** — Top-K features by mutual information outperform full feature set. Test via training comparison.
+1. **H1: Macro features improve predictions** — Adding VIX term structure, yields, dollar, gold, oil improves over OHLCV-only features. Test via ablation study.
+2. **H2: Longer lookback helps long horizons** — 120-day lookback improves 45-60d predictions vs 60-day lookback. Test by comparing horizon-specific accuracy.
+3. **H3: iTransformer concordance predicts put profitability** — Puts where scoring and iTransformer agree have higher simulated win rates. Test on historical data.
+4. **H4: Feature selection beats all-features** — Top-K features by mutual information outperform full feature set. Test via training comparison.
 
 ### Modifying the ML Pipeline
 
-- **Training config**: Edit cell 2 of `colab/train_itransformer.ipynb`
-- **Feature engineering**: Edit `compute_features()` in the notebook AND `src/lib/features.ts` (must stay in sync)
-- **Model architecture**: Edit the `iTransformer` class in notebook cell 5
-- **HF repo**: Set `HF_REPO_ID` in notebook cell 2
+- **Colab secrets**: Add `HF_TOKEN` and `HF_REPO_ID` via the Secrets panel (key icon) in Colab
+- **Training config**: Edit Cell 3 of `colab/train_itransformer.ipynb`
+- **Feature engineering**: Edit `compute_features()` in the notebook AND `src/lib/itransformer-features.ts` (must stay in sync)
+- **Model architecture**: Edit the `iTransformer` class in notebook Cell 6
 - **Website inference**: Edit `src/lib/hf-model.ts`
 
 ## Common Issues
