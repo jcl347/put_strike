@@ -321,7 +321,9 @@ export function generatePrediction(
   featureVector: FeatureVector,
   ivRank: number,
   daysToEarnings: number | null,
-  trendDirection: "up" | "down" | "sideways"
+  trendDirection: "up" | "down" | "sideways",
+  vix?: number,
+  beta?: number,
 ): PricePrediction {
   const features = featureVector.features;
 
@@ -378,7 +380,8 @@ export function generatePrediction(
   }));
 
   // Determine optimal put selling parameters
-  const ivTiming = ivRank > 50 ? "high" : ivRank > 25 ? "normal" : "low";
+  // Thresholds aligned with checklist.ts: >=50 pass, >=30 warn, <30 fail
+  const ivTiming = ivRank > 50 ? "high" : ivRank >= 30 ? "normal" : "low";
   const earningsSafe = daysToEarnings === null || daysToEarnings < 0 || daysToEarnings > 45;
   const trendAlignment = trendDirection === "down"
     ? "unfavorable"
@@ -388,17 +391,29 @@ export function generatePrediction(
 
   const reasoning: string[] = [];
   if (ivTiming === "high") reasoning.push("IV Rank is elevated — premium is rich (good for selling)");
-  else if (ivTiming === "low") reasoning.push("IV Rank is low — thin premiums, consider waiting");
+  else if (ivTiming === "low") reasoning.push("IV Rank is low (<30%) — thin premiums, consider waiting");
   if (!earningsSafe) reasoning.push(`Earnings in ${daysToEarnings} days — avoid selling puts through earnings`);
   if (trendDirection === "down") reasoning.push("Stock is in a downtrend — higher assignment risk");
   if (trendDirection === "up") reasoning.push("Stock is in an uptrend — favorable for put selling");
+
+  // VIX assessment — aligned with checklist.ts thresholds (15-35 pass, >=35 fail)
+  const vixLevel = vix ?? 0;
+  if (vixLevel >= 35) reasoning.push(`VIX at ${vixLevel.toFixed(1)} — crisis level, extreme tail risk`);
+  else if (vixLevel > 0 && vixLevel < 15) reasoning.push(`VIX at ${vixLevel.toFixed(1)} — low premiums, limited opportunity`);
+
+  // Beta assessment — aligned with checklist.ts thresholds (<=1.2 pass, >1.5 fail)
+  const betaLevel = beta ?? 1.0;
+  if (betaLevel > 1.5) reasoning.push(`Beta ${betaLevel.toFixed(2)} — high volatility, elevated assignment risk`);
+
   if (ensembleScore < -30) reasoning.push("Ensemble model is bearish — extra caution");
   if (ensembleScore > 30) reasoning.push("Ensemble model is bullish — good entry timing");
 
-  // Risk assessment
-  const riskLevel = trendDirection === "down" || !earningsSafe || ensembleScore < -40
+  // Risk assessment — incorporates VIX and beta to align with checklist verdict
+  const vixCrisis = vixLevel >= 35;
+  const highBeta = betaLevel > 1.5;
+  const riskLevel = trendDirection === "down" || !earningsSafe || ensembleScore < -40 || vixCrisis
     ? "high"
-    : trendDirection === "up" && earningsSafe && ivTiming !== "low"
+    : trendDirection === "up" && earningsSafe && ivTiming !== "low" && !highBeta
     ? "low"
     : "moderate";
 
@@ -418,7 +433,7 @@ export function generatePrediction(
     pred30 ? Math.round(pred30.lower68) : Math.round(currentPrice * 0.92)
   );
 
-  const recommended = earningsSafe && trendDirection !== "down" && riskLevel !== "high";
+  const recommended = earningsSafe && trendDirection !== "down" && riskLevel !== "high" && !vixCrisis;
 
   return {
     symbol,

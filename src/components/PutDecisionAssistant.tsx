@@ -74,8 +74,12 @@ export default function PutDecisionAssistant({ data }: Props) {
               }`}>
                 {ctx.trendDirection === "up" ? "\u25B2" : ctx.trendDirection === "down" ? "\u25BC" : "\u25C6"} {ctx.trendDirection}
               </span>
-              {ctx.earningsWarning && (
-                <span className="px-2 py-0.5 rounded bg-red-900/40 text-red-400">
+              {ctx.daysToEarnings != null && ctx.daysToEarnings >= 0 && ctx.daysToEarnings <= 45 && (
+                <span className={`px-2 py-0.5 rounded ${
+                  ctx.daysToEarnings <= 14
+                    ? "bg-red-900/40 text-red-400"
+                    : "bg-yellow-900/40 text-yellow-400"
+                }`}>
                   Earnings {ctx.daysToEarnings}d
                 </span>
               )}
