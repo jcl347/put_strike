@@ -129,6 +129,8 @@ export async function GET(request: NextRequest) {
       hv.hvRank,
       context?.daysToEarnings ?? null,
       context?.trendDirection ?? "sideways",
+      vix,
+      quote.beta,
     );
 
     // iTransformer (HuggingFace ONNX) runs client-side via onnxruntime-web.

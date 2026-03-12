@@ -85,14 +85,29 @@ export function evaluateChecklist(d: ChecklistInput): ChecklistItem[] {
     rule: "Stick to liquid underlyings with tight bid/ask spreads",
   });
 
+  // Earnings check: align with prediction.ts earningsSafe logic (45-day window)
+  // - >45 days: pass (standard 30-45 DTE put closes before earnings)
+  // - 15-45 days: warn (put DTE may extend through earnings, needs adjustment)
+  // - <=14 days: fail (earnings imminent, high risk)
+  const dte = ctx?.daysToEarnings;
+  const earningsStatus: "pass" | "warn" | "fail" =
+    dte === null || dte === undefined || dte < 0 || dte > 45
+      ? "pass"
+      : dte <= 14
+        ? "fail"
+        : "warn";
   items.push({
     label: "Earnings Clear",
     category: "Stock Selection",
-    status: !ctx?.earningsWarning ? "pass" : "fail",
+    status: earningsStatus,
     detail: ctx?.earningsDate
       ? `Earnings: ${ctx.earningsDate} (${ctx.daysToEarnings}d)`
       : "No earnings date found",
-    rule: "Avoid earnings announcements — surprise moves can blow past your strike",
+    rule: earningsStatus === "fail"
+      ? "Earnings imminent — do not sell puts through earnings"
+      : earningsStatus === "warn"
+        ? `Earnings in ${dte}d — a standard 30-45 DTE put would overlap. Shorten DTE or wait.`
+        : "Avoid earnings announcements — surprise moves can blow past your strike",
   });
 
   // ── IV Timing ──
@@ -318,11 +333,11 @@ export function getChecklistFlags(d: ChecklistInput): ChecklistFlag[] {
   const flags: ChecklistFlag[] = [];
   const ctx = d.context;
 
-  // Earnings warning — critical flag
-  if (ctx?.earningsWarning) {
+  // Earnings flag — critical flag (aligned with 45-day window from prediction.ts)
+  if (ctx?.daysToEarnings != null && ctx.daysToEarnings >= 0 && ctx.daysToEarnings <= 45) {
     flags.push({
       label: `Earnings in ${ctx.daysToEarnings}d`,
-      status: "fail",
+      status: ctx.daysToEarnings <= 14 ? "fail" : "warn",
       short: `ER ${ctx.daysToEarnings}d`,
     });
   }
