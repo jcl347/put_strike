@@ -870,11 +870,11 @@ export default function Home() {
       {/* Screener Results */}
       {activeTab === "screen" && (
         <div className="space-y-6">
-          {/* DTE Filter — shown once screener has data or is loading */}
-          {(screenerData || screenLoading) && (
+          {/* DTE Filter — shown only after screening completes */}
+          {screenerData && !screenLoading && (
             <div className="flex items-center gap-3">
               <DTESelector selected={dteRange} onChange={setDteRange} />
-              {screenerData?.top10?.length > 0 && !screenLoading && (
+              {screenerData?.top10?.length > 0 && (
                 <span className="text-xs text-gray-500 whitespace-nowrap">
                   {filteredTop10.length === screenerData.top10.length
                     ? `${filteredTop10.length} top puts`
