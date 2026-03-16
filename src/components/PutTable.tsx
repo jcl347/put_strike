@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useContractSize } from "./ContractSizeContext";
 
 interface ScoredPut {
   symbol: string;
@@ -46,6 +47,7 @@ const recLabels: Record<string, string> = {
 
 export default function PutTable({ puts, title }: PutTableProps) {
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
+  const { contractSize } = useContractSize();
 
   if (puts.length === 0) {
     return (
@@ -190,10 +192,10 @@ export default function PutTable({ puts, title }: PutTableProps) {
                               <div className="space-y-1 text-sm">
                                 <div className="flex justify-between">
                                   <span className="text-gray-400">
-                                    Collateral Required
+                                    Collateral ({contractSize} sh)
                                   </span>
                                   <span className="text-white">
-                                    ${(put.strikePrice * 100).toLocaleString()}
+                                    ${(put.strikePrice * contractSize).toLocaleString()}
                                   </span>
                                 </div>
                                 <div className="flex justify-between">
@@ -204,7 +206,7 @@ export default function PutTable({ puts, title }: PutTableProps) {
                                     $
                                     {(
                                       ((put.bid + put.ask) / 2) *
-                                      100
+                                      contractSize
                                     ).toFixed(0)}
                                   </span>
                                 </div>
@@ -228,7 +230,7 @@ export default function PutTable({ puts, title }: PutTableProps) {
                                     $
                                     {(
                                       ((put.bid + put.ask) / 2) *
-                                      100
+                                      contractSize
                                     ).toFixed(0)}{" "}
                                     ({put.premiumYield.toFixed(2)}%)
                                   </span>
@@ -242,7 +244,7 @@ export default function PutTable({ puts, title }: PutTableProps) {
                                     {(
                                       (put.strikePrice -
                                         (put.bid + put.ask) / 2) *
-                                      100
+                                      contractSize
                                     ).toFixed(0)}
                                   </span>
                                 </div>
@@ -251,7 +253,7 @@ export default function PutTable({ puts, title }: PutTableProps) {
                                     Theta (daily decay)
                                   </span>
                                   <span className="text-green-400">
-                                    ${(Math.abs(put.theta) * 100).toFixed(2)}/day
+                                    ${(Math.abs(put.theta) * contractSize).toFixed(2)}/day
                                   </span>
                                 </div>
                               </div>

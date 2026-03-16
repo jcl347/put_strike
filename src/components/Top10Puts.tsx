@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { getChecklistSummary, type ChecklistInput, type StockContext } from "@/lib/checklist";
+import { useContractSize } from "./ContractSizeContext";
 
 interface Top10Put {
   symbol: string;
@@ -108,7 +109,7 @@ function CrossComparisonGuide() {
           <div className="text-green-400 font-medium mb-1">Premium ($)</div>
           <p className="text-gray-400">
             Mid-price per share you collect upfront. Higher premium = more income but usually means closer to the money.
-            <span className="text-white"> Compare premium relative to collateral</span> (strike x 100) — $7.70 on a $360 strike
+            <span className="text-white"> Compare premium relative to collateral</span> (strike x shares) — $7.70 on a $360 strike
             is 2.1% yield vs $15.88 on $760 is also 2.1%.
           </p>
         </div>
@@ -156,6 +157,7 @@ function CrossComparisonGuide() {
 export default function Top10Puts({ puts }: Top10PutsProps) {
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [showGuide, setShowGuide] = useState(false);
+  const { contractSize } = useContractSize();
 
   // Already deduplicated upstream (1 best per stock, sorted by score)
   const displayPuts = puts.slice(0, 10);
@@ -383,15 +385,15 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
                           </span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-gray-400">Collateral</span>
+                          <span className="text-gray-400">Collateral ({contractSize} sh)</span>
                           <span className="text-white">
-                            ${(put.strikePrice * 100).toLocaleString()}
+                            ${(put.strikePrice * contractSize).toLocaleString()}
                           </span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-400">Premium</span>
                           <span className="text-green-400">
-                            ${(midPrice * 100).toFixed(0)}
+                            ${(midPrice * contractSize).toFixed(0)}
                           </span>
                         </div>
                         <div className="flex justify-between">
@@ -415,7 +417,7 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
                         <div className="flex justify-between">
                           <span className="text-gray-400">Theta/day</span>
                           <span className="text-green-400">
-                            ${(Math.abs(put.theta) * 100).toFixed(2)}
+                            ${(Math.abs(put.theta) * contractSize).toFixed(2)}
                           </span>
                         </div>
                       </div>
@@ -456,10 +458,10 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
                   {/* Management Rules */}
                   <div className="mt-3 pt-3 border-t border-gray-700/50 flex flex-wrap gap-2 text-xs">
                     <span className="px-2 py-1 bg-gray-700/50 rounded text-gray-300">
-                      Close at 50% profit (${(midPrice * 50).toFixed(0)} gain)
+                      Close at 50% profit (${(midPrice * contractSize * 0.5).toFixed(0)} gain)
                     </span>
                     <span className="px-2 py-1 bg-gray-700/50 rounded text-gray-300">
-                      Stop at 2x credit (${(midPrice * 100).toFixed(0)} loss)
+                      Stop at 2x credit (${(midPrice * contractSize).toFixed(0)} loss)
                     </span>
                     <span className="px-2 py-1 bg-gray-700/50 rounded text-gray-300">
                       Roll at 21 DTE if profitable

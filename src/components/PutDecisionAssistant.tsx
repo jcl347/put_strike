@@ -7,6 +7,7 @@ import {
   type ChecklistInput,
   type ChecklistItem,
 } from "@/lib/checklist";
+import { useContractSize } from "./ContractSizeContext";
 
 interface Props {
   data: ChecklistInput;
@@ -28,6 +29,7 @@ function getOverallVerdict(items: ChecklistItem[]): {
 
 export default function PutDecisionAssistant({ data }: Props) {
   const [expanded, setExpanded] = useState(false);
+  const { contractSize } = useContractSize();
   const items = evaluateChecklist(data);
   const verdict = getOverallVerdict(items);
   const categories = [...new Set(items.map(i => i.category))];
@@ -183,17 +185,17 @@ export default function PutDecisionAssistant({ data }: Props) {
                 {(() => {
                   const strike = Math.round(data.price * 0.92);
                   const estCredit = strike * 0.006;
-                  const collateral = strike * 100;
+                  const collateral = strike * contractSize;
                   return (
                     <div className="grid grid-cols-3 gap-2 text-xs">
                       <div className="bg-green-900/20 border border-green-700/30 rounded p-2">
                         <div className="text-green-400 font-medium">Max Profit (OTM)</div>
-                        <div className="text-white">${(estCredit * 100).toFixed(0)}/contract</div>
+                        <div className="text-white">${(estCredit * contractSize).toFixed(0)} ({contractSize} sh)</div>
                         <div className="text-gray-500">
                           {(estCredit / strike * 100).toFixed(2)}% return in 35d
                         </div>
                         <div className="text-gray-600 mt-1">
-                          Close at 50%: ${(estCredit * 50).toFixed(0)}
+                          Close at 50%: ${(estCredit * contractSize * 0.5).toFixed(0)}
                         </div>
                       </div>
                       <div className="bg-yellow-900/20 border border-yellow-700/30 rounded p-2">
@@ -208,12 +210,12 @@ export default function PutDecisionAssistant({ data }: Props) {
                       </div>
                       <div className="bg-red-900/20 border border-red-700/30 rounded p-2">
                         <div className="text-red-400 font-medium">Stop Loss (2x)</div>
-                        <div className="text-white">-${(estCredit * 100).toFixed(0)}/contract</div>
+                        <div className="text-white">-${(estCredit * contractSize).toFixed(0)} ({contractSize} sh)</div>
                         <div className="text-gray-500">
                           Close when loss = 2x credit
                         </div>
                         <div className="text-gray-600 mt-1">
-                          Max risk: ${(estCredit * 200).toFixed(0)}
+                          Max risk: ${(estCredit * contractSize * 2).toFixed(0)}
                         </div>
                       </div>
                     </div>
@@ -265,10 +267,11 @@ function PositionSizer({
 }) {
   const [portfolioSize, setPortfolioSize] = useState(100000);
   const [riskPct, setRiskPct] = useState(5);
+  const { contractSize } = useContractSize();
 
   const maxPosition = portfolioSize * (riskPct / 100);
   const suggestedStrike = Math.round(Math.min(price * 0.92, supportLevel));
-  const collateral = suggestedStrike * 100; // per contract
+  const collateral = suggestedStrike * contractSize;
   const maxContracts = Math.floor(maxPosition / collateral);
   const totalCollateral = maxContracts * collateral;
 

@@ -16,6 +16,8 @@ import StockForecast from "@/components/StockForecast";
 import TimeSeriesChart from "@/components/TimeSeriesChart";
 import ConcordanceCard from "@/components/ConcordanceCard";
 
+import { ContractSizeProvider, ContractSizeSelector, useContractSize } from "@/components/ContractSizeContext";
+
 interface AnalysisData {
   symbol: string;
   quote: {
@@ -118,6 +120,14 @@ interface ScreenProgress {
 type PredictionData = any;
 
 export default function Home() {
+  return (
+    <ContractSizeProvider>
+      <HomeInner />
+    </ContractSizeProvider>
+  );
+}
+
+function HomeInner() {
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
   const [screenerData, setScreenerData] = useState<ScreenerData | null>(null);
   const [prediction, setPrediction] = useState<PredictionData | null>(null);
@@ -762,9 +772,10 @@ export default function Home() {
             </div>
           )}
 
-          {/* DTE Filter — directly above puts table */}
-          <div className="flex items-center gap-3">
+          {/* DTE Filter + Contract Size — directly above puts table */}
+          <div className="flex items-center gap-3 flex-wrap">
             <DTESelector selected={dteRange} onChange={setDteRange} />
+            <ContractSizeSelector />
             {analysis.scoredPuts.length > 0 && (
               <span className="text-xs text-gray-500 whitespace-nowrap">
                 {filteredAnalysisPuts.length === analysis.scoredPuts.length
@@ -829,10 +840,11 @@ export default function Home() {
       {/* Screener Results */}
       {activeTab === "screen" && (
         <div className="space-y-6">
-          {/* DTE Filter — shown once screener has data or is loading */}
+          {/* DTE Filter + Contract Size — shown once screener has data or is loading */}
           {(screenerData || screenLoading) && (
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <DTESelector selected={dteRange} onChange={setDteRange} />
+              <ContractSizeSelector />
               {screenerData?.top10?.length > 0 && !screenLoading && (
                 <span className="text-xs text-gray-500 whitespace-nowrap">
                   {filteredTop10.length === screenerData.top10.length
