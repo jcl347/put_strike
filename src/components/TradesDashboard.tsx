@@ -20,10 +20,30 @@ interface TradeStats {
     avg_winning_score: number;
     avg_losing_score: number;
     win_rate: number;
+    profit_factor: number;
+    max_drawdown: number;
+    gross_wins: number;
+    gross_losses: number;
+    avg_holding_days: number;
+    avg_win_holding_days: number;
+    avg_loss_holding_days: number;
   };
   monthlyPnl: { month: string; pnl: number; trades: number; wins: number }[];
   pnlTimeline: { id: number; symbol: string; pnl: number; pnl_percent: number; closed_at: string; cumulative_pnl: number }[];
   bySymbol: { symbol: string; trades: number; wins: number; total_pnl: number; avg_return: number }[];
+}
+
+interface CapitalData {
+  totalDeposits: number;
+  totalWithdrawals: number;
+  netCapital: number;
+  realizedPnl: number;
+  portfolioValue: number;
+  capitalDeployed: number;
+  availableCapital: number;
+  unrealizedPremium: number;
+  returnOnCapital: number;
+  events: { id: number; type: string; amount: string; notes: string | null; created_at: string }[];
 }
 
 interface Trade {
@@ -48,6 +68,10 @@ interface Trade {
   closed_at: string | null;
   notes: string | null;
   created_at: string;
+  profit_target_price: string | null;
+  stop_loss_price: string | null;
+  management_date: string | null;
+  quantity: number | null;
 }
 
 interface TradesDashboardProps {
@@ -76,28 +100,10 @@ function WinRateDonut({ winRate, wins, losses }: { winRate: number; wins: number
   return (
     <div className="flex flex-col items-center">
       <svg viewBox="0 0 100 100" className="w-32 h-32">
-        {/* Loss arc (background) */}
-        <circle
-          cx={cx} cy={cy} r={r}
-          fill="none" stroke="#7f1d1d" strokeWidth={8}
-          strokeDasharray={`${circumference}`}
-          transform={`rotate(-90 ${cx} ${cy})`}
-        />
-        {/* Win arc */}
-        <circle
-          cx={cx} cy={cy} r={r}
-          fill="none" stroke="#22c55e" strokeWidth={8}
-          strokeDasharray={`${winArc} ${lossArc}`}
-          strokeLinecap="round"
-          transform={`rotate(-90 ${cx} ${cy})`}
-        />
-        {/* Center text */}
-        <text x={cx} y={cy - 4} textAnchor="middle" fill="white" fontSize={14} fontWeight="bold">
-          {winRate.toFixed(0)}%
-        </text>
-        <text x={cx} y={cy + 10} textAnchor="middle" fill="#9ca3af" fontSize={7}>
-          win rate
-        </text>
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#7f1d1d" strokeWidth={8} strokeDasharray={`${circumference}`} transform={`rotate(-90 ${cx} ${cy})`} />
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#22c55e" strokeWidth={8} strokeDasharray={`${winArc} ${lossArc}`} strokeLinecap="round" transform={`rotate(-90 ${cx} ${cy})`} />
+        <text x={cx} y={cy - 4} textAnchor="middle" fill="white" fontSize={14} fontWeight="bold">{winRate.toFixed(0)}%</text>
+        <text x={cx} y={cy + 10} textAnchor="middle" fill="#9ca3af" fontSize={7}>win rate</text>
       </svg>
       <div className="flex gap-4 text-xs mt-1">
         <span className="text-green-400">{wins}W</span>
@@ -110,14 +116,8 @@ function WinRateDonut({ winRate, wins, losses }: { winRate: number; wins: number
 function CumulativePnLChart({ timeline }: { timeline: TradeStats["pnlTimeline"] }) {
   if (timeline.length === 0) return null;
 
-  const W = 500;
-  const H = 160;
-  const PAD_L = 50;
-  const PAD_R = 10;
-  const PAD_T = 10;
-  const PAD_B = 25;
-  const plotW = W - PAD_L - PAD_R;
-  const plotH = H - PAD_T - PAD_B;
+  const W = 500, H = 160, PAD_L = 50, PAD_R = 10, PAD_T = 10, PAD_B = 25;
+  const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
 
   const values = [0, ...timeline.map((t) => t.cumulative_pnl)];
   const minV = Math.min(0, ...values);
@@ -127,89 +127,49 @@ function CumulativePnLChart({ timeline }: { timeline: TradeStats["pnlTimeline"] 
   const xScale = (i: number) => PAD_L + (i / (values.length - 1)) * plotW;
   const yScale = (v: number) => PAD_T + plotH - ((v - minV) / range) * plotH;
 
-  const linePath = values
-    .map((v, i) => `${i === 0 ? "M" : "L"}${xScale(i).toFixed(1)},${yScale(v).toFixed(1)}`)
-    .join(" ");
-
-  // Gradient area
+  const linePath = values.map((v, i) => `${i === 0 ? "M" : "L"}${xScale(i).toFixed(1)},${yScale(v).toFixed(1)}`).join(" ");
   const areaPath = `${linePath} L${xScale(values.length - 1).toFixed(1)},${yScale(0).toFixed(1)} L${xScale(0).toFixed(1)},${yScale(0).toFixed(1)} Z`;
-
   const finalPnl = values[values.length - 1];
   const isPositive = finalPnl >= 0;
 
-  // Y ticks
   const yTicks = Array.from({ length: 5 }, (_, i) => {
     const v = minV + (range * i) / 4;
     return { value: v, y: yScale(v) };
   });
 
   return (
-    <div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 180 }}>
-        <defs>
-          <linearGradient id="pnlGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={isPositive ? "#22c55e" : "#ef4444"} stopOpacity={0.3} />
-            <stop offset="100%" stopColor={isPositive ? "#22c55e" : "#ef4444"} stopOpacity={0.02} />
-          </linearGradient>
-        </defs>
-
-        {/* Grid */}
-        {yTicks.map((t, i) => (
-          <g key={i}>
-            <line x1={PAD_L} x2={W - PAD_R} y1={t.y} y2={t.y} stroke="#374151" strokeWidth={0.5} />
-            <text x={PAD_L - 5} y={t.y + 3} textAnchor="end" fill="#6b7280" fontSize={8}>
-              ${t.value >= 0 ? "" : ""}{t.value.toFixed(0)}
-            </text>
-          </g>
-        ))}
-
-        {/* Zero line */}
-        <line
-          x1={PAD_L} x2={W - PAD_R}
-          y1={yScale(0)} y2={yScale(0)}
-          stroke="#6b7280" strokeWidth={1} strokeDasharray="4,3"
-        />
-
-        {/* Area */}
-        <path d={areaPath} fill="url(#pnlGrad)" />
-
-        {/* Line */}
-        <path d={linePath} fill="none" stroke={isPositive ? "#22c55e" : "#ef4444"} strokeWidth={2} />
-
-        {/* Trade dots */}
-        {timeline.map((t, i) => (
-          <circle
-            key={t.id}
-            cx={xScale(i + 1)}
-            cy={yScale(t.cumulative_pnl)}
-            r={3}
-            fill={t.pnl >= 0 ? "#22c55e" : "#ef4444"}
-            stroke="#1f2937"
-            strokeWidth={1}
-          >
-            <title>{t.symbol}: ${t.pnl.toFixed(0)} (cumulative: ${t.cumulative_pnl.toFixed(0)})</title>
-          </circle>
-        ))}
-
-        {/* X label */}
-        <text x={PAD_L} y={H - 5} fill="#6b7280" fontSize={8}>Trade 1</text>
-        <text x={W - PAD_R} y={H - 5} textAnchor="end" fill="#6b7280" fontSize={8}>Trade {timeline.length}</text>
-      </svg>
-    </div>
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 180 }}>
+      <defs>
+        <linearGradient id="pnlGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={isPositive ? "#22c55e" : "#ef4444"} stopOpacity={0.3} />
+          <stop offset="100%" stopColor={isPositive ? "#22c55e" : "#ef4444"} stopOpacity={0.02} />
+        </linearGradient>
+      </defs>
+      {yTicks.map((t, i) => (
+        <g key={i}>
+          <line x1={PAD_L} x2={W - PAD_R} y1={t.y} y2={t.y} stroke="#374151" strokeWidth={0.5} />
+          <text x={PAD_L - 5} y={t.y + 3} textAnchor="end" fill="#6b7280" fontSize={8}>${t.value.toFixed(0)}</text>
+        </g>
+      ))}
+      <line x1={PAD_L} x2={W - PAD_R} y1={yScale(0)} y2={yScale(0)} stroke="#6b7280" strokeWidth={1} strokeDasharray="4,3" />
+      <path d={areaPath} fill="url(#pnlGrad)" />
+      <path d={linePath} fill="none" stroke={isPositive ? "#22c55e" : "#ef4444"} strokeWidth={2} />
+      {timeline.map((t, i) => (
+        <circle key={t.id} cx={xScale(i + 1)} cy={yScale(t.cumulative_pnl)} r={3} fill={t.pnl >= 0 ? "#22c55e" : "#ef4444"} stroke="#1f2937" strokeWidth={1}>
+          <title>{t.symbol}: ${t.pnl.toFixed(0)} (cumulative: ${t.cumulative_pnl.toFixed(0)})</title>
+        </circle>
+      ))}
+      <text x={PAD_L} y={H - 5} fill="#6b7280" fontSize={8}>Trade 1</text>
+      <text x={W - PAD_R} y={H - 5} textAnchor="end" fill="#6b7280" fontSize={8}>Trade {timeline.length}</text>
+    </svg>
   );
 }
 
 function MonthlyBarChart({ data }: { data: TradeStats["monthlyPnl"] }) {
   if (data.length === 0) return null;
 
-  const W = 500;
-  const H = 140;
-  const PAD_L = 50;
-  const PAD_R = 10;
-  const PAD_T = 10;
-  const PAD_B = 30;
-  const plotW = W - PAD_L - PAD_R;
-  const plotH = H - PAD_T - PAD_B;
+  const W = 500, H = 140, PAD_L = 50, PAD_R = 10, PAD_T = 10, PAD_B = 30;
+  const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
 
   const values = data.map((d) => d.pnl);
   const minV = Math.min(0, ...values);
@@ -218,67 +178,35 @@ function MonthlyBarChart({ data }: { data: TradeStats["monthlyPnl"] }) {
 
   const barW = Math.min(40, (plotW / data.length) * 0.7);
   const gap = (plotW - barW * data.length) / (data.length + 1);
-
   const yScale = (v: number) => PAD_T + plotH - ((v - minV) / range) * plotH;
   const zeroY = yScale(0);
 
   return (
-    <div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 160 }}>
-        {/* Zero line */}
-        <line x1={PAD_L} x2={W - PAD_R} y1={zeroY} y2={zeroY} stroke="#6b7280" strokeWidth={1} strokeDasharray="4,3" />
-
-        {data.map((d, i) => {
-          const x = PAD_L + gap + i * (barW + gap);
-          const y = yScale(d.pnl);
-          const barH = Math.abs(y - zeroY);
-          const isPos = d.pnl >= 0;
-          return (
-            <g key={d.month}>
-              <rect
-                x={x}
-                y={isPos ? y : zeroY}
-                width={barW}
-                height={Math.max(1, barH)}
-                rx={2}
-                fill={isPos ? "#22c55e" : "#ef4444"}
-                opacity={0.8}
-              >
-                <title>{d.month}: ${d.pnl.toFixed(0)} ({d.wins}/{d.trades} wins)</title>
-              </rect>
-              <text
-                x={x + barW / 2}
-                y={H - PAD_B + 12}
-                textAnchor="middle"
-                fill="#6b7280"
-                fontSize={7}
-              >
-                {d.month.slice(5)}
-              </text>
-              <text
-                x={x + barW / 2}
-                y={(isPos ? y : zeroY + barH) + (isPos ? -4 : 12)}
-                textAnchor="middle"
-                fill={isPos ? "#4ade80" : "#f87171"}
-                fontSize={7}
-              >
-                ${Math.abs(d.pnl).toFixed(0)}
-              </text>
-            </g>
-          );
-        })}
-
-        {/* Y axis labels */}
-        <text x={PAD_L - 5} y={PAD_T + 5} textAnchor="end" fill="#6b7280" fontSize={8}>${maxV.toFixed(0)}</text>
-        <text x={PAD_L - 5} y={H - PAD_B} textAnchor="end" fill="#6b7280" fontSize={8}>${minV.toFixed(0)}</text>
-      </svg>
-    </div>
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 160 }}>
+      <line x1={PAD_L} x2={W - PAD_R} y1={zeroY} y2={zeroY} stroke="#6b7280" strokeWidth={1} strokeDasharray="4,3" />
+      {data.map((d, i) => {
+        const x = PAD_L + gap + i * (barW + gap);
+        const y = yScale(d.pnl);
+        const barH = Math.abs(y - zeroY);
+        const isPos = d.pnl >= 0;
+        return (
+          <g key={d.month}>
+            <rect x={x} y={isPos ? y : zeroY} width={barW} height={Math.max(1, barH)} rx={2} fill={isPos ? "#22c55e" : "#ef4444"} opacity={0.8}>
+              <title>{d.month}: ${d.pnl.toFixed(0)} ({d.wins}/{d.trades} wins)</title>
+            </rect>
+            <text x={x + barW / 2} y={H - PAD_B + 12} textAnchor="middle" fill="#6b7280" fontSize={7}>{d.month.slice(5)}</text>
+            <text x={x + barW / 2} y={(isPos ? y : zeroY + barH) + (isPos ? -4 : 12)} textAnchor="middle" fill={isPos ? "#4ade80" : "#f87171"} fontSize={7}>${Math.abs(d.pnl).toFixed(0)}</text>
+          </g>
+        );
+      })}
+      <text x={PAD_L - 5} y={PAD_T + 5} textAnchor="end" fill="#6b7280" fontSize={8}>${maxV.toFixed(0)}</text>
+      <text x={PAD_L - 5} y={H - PAD_B} textAnchor="end" fill="#6b7280" fontSize={8}>${minV.toFixed(0)}</text>
+    </svg>
   );
 }
 
 function SymbolBreakdown({ data }: { data: TradeStats["bySymbol"] }) {
   if (data.length === 0) return null;
-
   const maxPnl = Math.max(...data.map((d) => Math.abs(d.total_pnl)), 1);
 
   return (
@@ -291,20 +219,203 @@ function SymbolBreakdown({ data }: { data: TradeStats["bySymbol"] }) {
           <div key={d.symbol} className="flex items-center gap-2 text-sm">
             <span className="w-12 text-white font-medium text-xs">{d.symbol}</span>
             <div className="flex-1 h-5 bg-gray-800 rounded-full overflow-hidden relative">
-              <div
-                className={`h-full rounded-full transition-all ${isPos ? "bg-green-600/60" : "bg-red-600/60"}`}
-                style={{ width: `${barPct}%` }}
-              />
+              <div className={`h-full rounded-full transition-all ${isPos ? "bg-green-600/60" : "bg-red-600/60"}`} style={{ width: `${barPct}%` }} />
               <span className={`absolute inset-0 flex items-center px-2 text-[10px] font-medium ${isPos ? "text-green-300" : "text-red-300"}`}>
                 {isPos ? "+" : ""}${d.total_pnl.toFixed(0)}
               </span>
             </div>
-            <span className="w-16 text-[10px] text-gray-500 text-right">
-              {d.wins}/{d.trades} ({winRate.toFixed(0)}%)
-            </span>
+            <span className="w-16 text-[10px] text-gray-500 text-right">{d.wins}/{d.trades} ({winRate.toFixed(0)}%)</span>
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ─── Capital Management ────────────────────────────────────────────
+
+function CapitalSection({ capital, onRefresh }: { capital: CapitalData | null; onRefresh: () => void }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [type, setType] = useState<"DEPOSIT" | "WITHDRAWAL">("DEPOSIT");
+  const [amount, setAmount] = useState("");
+  const [capNotes, setCapNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const handleAdd = async () => {
+    if (!amount || Number(amount) <= 0) return;
+    setSaving(true);
+    try {
+      await fetch("/api/trades/capital", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type, amount: Number(amount), notes: capNotes || null }),
+      });
+      setAmount("");
+      setCapNotes("");
+      setShowAdd(false);
+      onRefresh();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!capital) return null;
+
+  const hasCapital = capital.netCapital > 0;
+  const pctReturn = capital.returnOnCapital;
+  const deployedPct = capital.netCapital > 0 ? (capital.capitalDeployed / capital.portfolioValue) * 100 : 0;
+
+  return (
+    <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-medium text-gray-400">Portfolio Capital</h3>
+        <button
+          onClick={() => setShowAdd(!showAdd)}
+          className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+        >
+          {showAdd ? "Cancel" : "Add / Withdraw"}
+        </button>
+      </div>
+
+      {!hasCapital && !showAdd && (
+        <div className="text-center py-4">
+          <p className="text-gray-500 text-sm mb-2">No capital allocated yet.</p>
+          <p className="text-gray-600 text-xs">Click &quot;Add / Withdraw&quot; to deposit starting capital for your simulation.</p>
+        </div>
+      )}
+
+      {hasCapital && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div>
+            <div className="text-xs text-gray-500">Portfolio Value</div>
+            <div className={`text-lg font-bold ${capital.portfolioValue >= capital.netCapital ? "text-green-400" : "text-red-400"}`}>
+              ${capital.portfolioValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-gray-500">Available Capital</div>
+            <div className="text-lg font-bold text-white">
+              ${capital.availableCapital.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-gray-500">Return on Capital</div>
+            <div className={`text-lg font-bold ${pctReturn >= 0 ? "text-green-400" : "text-red-400"}`}>
+              {pctReturn >= 0 ? "+" : ""}{pctReturn.toFixed(2)}%
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-gray-500">Deployed</div>
+            <div className="text-lg font-bold text-blue-400">
+              {deployedPct.toFixed(0)}%
+            </div>
+            <div className="w-full h-1.5 bg-gray-700 rounded-full mt-1">
+              <div className="h-full bg-blue-500 rounded-full" style={{ width: `${Math.min(100, deployedPct)}%` }} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Capital history */}
+      {hasCapital && capital.events.length > 0 && (
+        <div className="border-t border-gray-700/50 pt-2 mt-2">
+          <div className="text-[10px] text-gray-600 mb-1">Recent transactions</div>
+          <div className="space-y-0.5 max-h-20 overflow-y-auto">
+            {capital.events.slice(0, 5).map((e) => (
+              <div key={e.id} className="flex justify-between text-[11px]">
+                <span className={e.type === "DEPOSIT" ? "text-green-500" : "text-red-500"}>
+                  {e.type === "DEPOSIT" ? "+" : "-"}${Number(e.amount).toLocaleString()}
+                </span>
+                <span className="text-gray-600">{new Date(e.created_at).toLocaleDateString()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Add/Withdraw form */}
+      {showAdd && (
+        <div className="border-t border-gray-700/50 pt-3 mt-3 space-y-2">
+          <div className="flex gap-2">
+            <button onClick={() => setType("DEPOSIT")} className={`flex-1 py-1.5 rounded text-xs font-medium ${type === "DEPOSIT" ? "bg-green-600 text-white" : "bg-gray-700 text-gray-400"}`}>Deposit</button>
+            <button onClick={() => setType("WITHDRAWAL")} className={`flex-1 py-1.5 rounded text-xs font-medium ${type === "WITHDRAWAL" ? "bg-red-600 text-white" : "bg-gray-700 text-gray-400"}`}>Withdraw</button>
+          </div>
+          <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Amount ($)" className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500" />
+          <input type="text" value={capNotes} onChange={(e) => setCapNotes(e.target.value)} placeholder="Notes (optional)" className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500" />
+          <button onClick={handleAdd} disabled={saving || !amount} className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white rounded text-sm font-medium">{saving ? "Saving..." : `${type === "DEPOSIT" ? "Deposit" : "Withdraw"} $${amount || "0"}`}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Tastytrade Alerts ─────────────────────────────────────────────
+
+function ManagementAlerts({ trades }: { trades: Trade[] }) {
+  const openTrades = trades.filter((t) => t.status === "OPEN");
+  if (openTrades.length === 0) return null;
+
+  const today = new Date();
+  const alerts: { trade: Trade; type: string; urgency: "high" | "medium" | "low"; message: string }[] = [];
+
+  for (const trade of openTrades) {
+    const expDate = new Date(trade.expiration);
+    const daysToExp = Math.ceil((expDate.getTime() - today.getTime()) / 86400000);
+    const mgmtDate = trade.management_date ? new Date(trade.management_date) : null;
+
+    // 21 DTE management alert
+    if (daysToExp <= 21) {
+      alerts.push({
+        trade,
+        type: "21 DTE",
+        urgency: daysToExp <= 7 ? "high" : "medium",
+        message: `${daysToExp}d to expiration — evaluate roll or close`,
+      });
+    } else if (mgmtDate && today >= mgmtDate) {
+      alerts.push({
+        trade,
+        type: "MGMT DATE",
+        urgency: "medium",
+        message: "Management date reached — review position",
+      });
+    }
+
+    // Expiration imminent
+    if (daysToExp <= 3 && daysToExp > 0) {
+      alerts.push({
+        trade,
+        type: "EXPIRING",
+        urgency: "high",
+        message: `Expires in ${daysToExp} day${daysToExp > 1 ? "s" : ""} — close or let expire`,
+      });
+    }
+  }
+
+  if (alerts.length === 0) return null;
+
+  const urgencyColors = {
+    high: "bg-red-900/30 border-red-700/40 text-red-400",
+    medium: "bg-yellow-900/30 border-yellow-700/40 text-yellow-400",
+    low: "bg-blue-900/30 border-blue-700/40 text-blue-400",
+  };
+
+  return (
+    <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+      <h3 className="text-sm font-medium text-gray-400 mb-2">Management Alerts (tastytrade)</h3>
+      <div className="space-y-1.5">
+        {alerts.map((a, i) => (
+          <div key={i} className={`px-3 py-2 rounded-lg border text-xs flex items-center gap-2 ${urgencyColors[a.urgency]}`}>
+            <span className="font-bold">{a.trade.symbol}</span>
+            <span className="px-1.5 py-0.5 rounded bg-gray-800/50 text-[10px] font-medium">{a.type}</span>
+            <span>{a.message}</span>
+            {a.trade.profit_target_price && (
+              <span className="ml-auto text-gray-500">
+                Target: ${Number(a.trade.profit_target_price).toFixed(2)} | Stop: ${Number(a.trade.stop_loss_price).toFixed(2)}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -321,16 +432,18 @@ function CloseTradeModal({ trade, onClose, onSuccess }: { trade: Trade; onClose:
   const premium = Number(trade.premium_received);
   const collateral = Number(trade.collateral);
 
-  // Estimate P&L preview
   let previewPnl = 0;
   if (status === "EXPIRED") {
     previewPnl = premium * 100;
   } else if (status === "ASSIGNED" && stockPrice) {
-    const assignmentLoss = (Number(trade.strike_price) - Number(stockPrice)) * 100;
-    previewPnl = premium * 100 - assignmentLoss;
+    previewPnl = premium * 100 - (Number(trade.strike_price) - Number(stockPrice)) * 100;
   } else if (closePrice) {
     previewPnl = (premium - Number(closePrice)) * 100;
   }
+
+  // Apply quantity
+  const qty = trade.quantity ?? 1;
+  previewPnl *= qty;
 
   const handleSubmit = async () => {
     setSaving(true);
@@ -368,86 +481,63 @@ function CloseTradeModal({ trade, onClose, onSuccess }: { trade: Trade; onClose:
         <div className="bg-gray-800/70 rounded-lg p-3 mb-4 text-sm space-y-1">
           <div className="flex justify-between">
             <span className="text-gray-400">Strike</span>
-            <span className="text-white">${Number(trade.strike_price).toFixed(2)} put</span>
+            <span className="text-white">${Number(trade.strike_price).toFixed(2)} put x{qty}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-gray-400">Premium Received</span>
             <span className="text-green-400">${premium.toFixed(2)}/share</span>
           </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">Collateral</span>
-            <span className="text-white">${collateral.toLocaleString()}</span>
-          </div>
+          {trade.profit_target_price && (
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-500">50% profit target</span>
+              <span className="text-green-500">Buy back at ${Number(trade.profit_target_price).toFixed(2)}</span>
+            </div>
+          )}
+          {trade.stop_loss_price && (
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-500">2x credit stop</span>
+              <span className="text-red-500">Buy back at ${Number(trade.stop_loss_price).toFixed(2)}</span>
+            </div>
+          )}
         </div>
 
         <div className="space-y-3 mb-4">
           <div>
             <label className="block text-sm text-gray-400 mb-1">Outcome</label>
-            <select
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-            >
+            <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
               <option value="EXPIRED">Expired Worthless (full profit)</option>
-              <option value="CLOSED_PROFIT">Bought Back at Profit</option>
-              <option value="CLOSED_LOSS">Bought Back at Loss</option>
-              <option value="ASSIGNED">Assigned (stock purchased)</option>
+              <option value="CLOSED_PROFIT">Bought Back at Profit (below entry)</option>
+              <option value="CLOSED_LOSS">Bought Back at Loss (above entry)</option>
+              <option value="ASSIGNED">Assigned (stock purchased at strike)</option>
             </select>
           </div>
 
           {(status === "CLOSED_PROFIT" || status === "CLOSED_LOSS") && (
             <div>
               <label className="block text-sm text-gray-400 mb-1">Close Price (per share)</label>
-              <input
-                type="number"
-                step="0.01"
-                value={closePrice}
-                onChange={(e) => setClosePrice(e.target.value)}
-                placeholder="Price you bought the put back at"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
-              />
+              <input type="number" step="0.01" value={closePrice} onChange={(e) => setClosePrice(e.target.value)} placeholder={`50% target: $${trade.profit_target_price ? Number(trade.profit_target_price).toFixed(2) : ""}`} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500" />
             </div>
           )}
 
           {status === "ASSIGNED" && (
             <div>
               <label className="block text-sm text-gray-400 mb-1">Stock Price at Assignment</label>
-              <input
-                type="number"
-                step="0.01"
-                value={stockPrice}
-                onChange={(e) => setStockPrice(e.target.value)}
-                placeholder="Stock price when assigned"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
-              />
+              <input type="number" step="0.01" value={stockPrice} onChange={(e) => setStockPrice(e.target.value)} placeholder="Stock price when assigned" className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500" />
             </div>
           )}
 
-          {/* P&L Preview */}
           <div className={`text-center p-2 rounded-lg ${previewPnl >= 0 ? "bg-green-900/20 border border-green-700/30" : "bg-red-900/20 border border-red-700/30"}`}>
             <div className="text-xs text-gray-400">Estimated P&L</div>
-            <div className={`text-xl font-bold ${previewPnl >= 0 ? "text-green-400" : "text-red-400"}`}>
-              {previewPnl >= 0 ? "+" : ""}${previewPnl.toFixed(0)}
-            </div>
-            <div className="text-xs text-gray-500">
-              {collateral > 0 ? `${((previewPnl / collateral) * 100).toFixed(2)}% of collateral` : ""}
-            </div>
+            <div className={`text-xl font-bold ${previewPnl >= 0 ? "text-green-400" : "text-red-400"}`}>{previewPnl >= 0 ? "+" : ""}${previewPnl.toFixed(0)}</div>
+            <div className="text-xs text-gray-500">{collateral > 0 ? `${((previewPnl / collateral) * 100).toFixed(2)}% of collateral` : ""}</div>
           </div>
         </div>
 
-        {error && (
-          <div className="mb-3 text-sm text-red-400 bg-red-900/20 border border-red-700/30 rounded px-3 py-2">{error}</div>
-        )}
+        {error && <div className="mb-3 text-sm text-red-400 bg-red-900/20 border border-red-700/30 rounded px-3 py-2">{error}</div>}
 
         <div className="flex gap-3">
           <button onClick={onClose} className="flex-1 px-4 py-2 bg-gray-800 text-gray-400 rounded-lg hover:bg-gray-700 transition-colors text-sm">Cancel</button>
-          <button
-            onClick={handleSubmit}
-            disabled={saving}
-            className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white font-medium rounded-lg transition-colors text-sm"
-          >
-            {saving ? "Saving..." : "Close Trade"}
-          </button>
+          <button onClick={handleSubmit} disabled={saving} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white font-medium rounded-lg transition-colors text-sm">{saving ? "Saving..." : "Close Trade"}</button>
         </div>
       </div>
     </div>
@@ -459,6 +549,7 @@ function CloseTradeModal({ trade, onClose, onSuccess }: { trade: Trade; onClose:
 export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
   const [stats, setStats] = useState<TradeStats | null>(null);
   const [trades, setTrades] = useState<Trade[]>([]);
+  const [capital, setCapital] = useState<CapitalData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [closingTrade, setClosingTrade] = useState<Trade | null>(null);
@@ -469,9 +560,10 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
     setLoading(true);
     setError(null);
     try {
-      const [statsRes, tradesRes] = await Promise.all([
+      const [statsRes, tradesRes, capitalRes] = await Promise.all([
         fetch("/api/trades/stats"),
         fetch("/api/trades"),
+        fetch("/api/trades/capital"),
       ]);
 
       if (statsRes.status === 503 || tradesRes.status === 503) {
@@ -479,17 +571,15 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
         return;
       }
 
-      if (!statsRes.ok || !tradesRes.ok) {
-        throw new Error("Failed to load trade data");
-      }
+      if (!statsRes.ok || !tradesRes.ok) throw new Error("Failed to load trade data");
 
-      const [statsData, tradesData] = await Promise.all([
-        statsRes.json(),
-        tradesRes.json(),
-      ]);
-
+      const [statsData, tradesData] = await Promise.all([statsRes.json(), tradesRes.json()]);
       setStats(statsData);
       setTrades(tradesData.trades);
+
+      if (capitalRes.ok) {
+        setCapital(await capitalRes.json());
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load trades");
     } finally {
@@ -497,17 +587,13 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
     }
   }, []);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData, refreshKey]);
+  useEffect(() => { fetchData(); }, [fetchData, refreshKey]);
 
   const handleDelete = async (id: number) => {
     setDeletingId(id);
     try {
       const res = await fetch(`/api/trades/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        fetchData();
-      }
+      if (res.ok) fetchData();
     } finally {
       setDeletingId(null);
     }
@@ -531,9 +617,9 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
         <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 max-w-lg mx-auto text-left text-sm text-gray-400">
           <p className="font-medium text-white mb-2">Quick Setup:</p>
           <ol className="list-decimal list-inside space-y-1">
-            <li>Create a free Neon project at <span className="text-blue-400">neon.tech</span></li>
-            <li>Copy the connection string</li>
-            <li>Add <code className="text-green-400">DATABASE_URL=&quot;postgres://...&quot;</code> to <code>.env.local</code></li>
+            <li>In Vercel: Storage tab &rarr; Connect your Neon database (or Create Database)</li>
+            <li>Vercel auto-injects <code className="text-green-400">POSTGRES_URL</code> &mdash; no manual config needed</li>
+            <li>For local dev: add <code className="text-green-400">DATABASE_URL=&quot;postgres://...&quot;</code> to <code>.env.local</code></li>
             <li>Restart the dev server</li>
           </ol>
         </div>
@@ -550,53 +636,29 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
 
   return (
     <div className="space-y-6">
+      {/* Capital Management */}
+      <CapitalSection capital={capital} onRefresh={fetchData} />
+
+      {/* Management Alerts */}
+      <ManagementAlerts trades={trades} />
+
       {/* KPI Cards */}
       {s && (
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          <KPICard
-            label="Total P&L"
-            value={`${s.total_pnl >= 0 ? "+" : ""}$${s.total_pnl.toFixed(0)}`}
-            color={s.total_pnl >= 0 ? "green" : "red"}
-            sub={`${s.closed_trades} closed trades`}
-          />
-          <KPICard
-            label="Win Rate"
-            value={`${s.win_rate.toFixed(1)}%`}
-            color={s.win_rate >= 55 ? "green" : s.win_rate >= 45 ? "yellow" : "red"}
-            sub={`${s.winning_trades}W / ${s.losing_trades}L`}
-          />
-          <KPICard
-            label="Avg Return"
-            value={`${s.avg_pnl_percent >= 0 ? "+" : ""}${s.avg_pnl_percent.toFixed(2)}%`}
-            color={s.avg_pnl_percent >= 0 ? "green" : "red"}
-            sub="per trade on collateral"
-          />
-          <KPICard
-            label="Open Trades"
-            value={String(s.open_trades)}
-            color="blue"
-            sub={`$${s.total_capital_at_risk.toLocaleString()} at risk`}
-          />
-          <KPICard
-            label="Best Trade"
-            value={`+$${s.best_trade_pnl.toFixed(0)}`}
-            color="green"
-            sub="single trade P&L"
-          />
-          <KPICard
-            label="Worst Trade"
-            value={`$${s.worst_trade_pnl.toFixed(0)}`}
-            color="red"
-            sub="single trade P&L"
-          />
+          <KPICard label="Total P&L" value={`${s.total_pnl >= 0 ? "+" : ""}$${s.total_pnl.toFixed(0)}`} color={s.total_pnl >= 0 ? "green" : "red"} sub={`${s.closed_trades} closed trades`} />
+          <KPICard label="Win Rate" value={`${s.win_rate.toFixed(1)}%`} color={s.win_rate >= 55 ? "green" : s.win_rate >= 45 ? "yellow" : "red"} sub={`${s.winning_trades}W / ${s.losing_trades}L`} />
+          <KPICard label="Profit Factor" value={s.profit_factor >= 999 ? "\u221e" : s.profit_factor.toFixed(2)} color={s.profit_factor >= 1.5 ? "green" : s.profit_factor >= 1 ? "yellow" : "red"} sub="gross wins / gross losses" />
+          <KPICard label="Open Trades" value={String(s.open_trades)} color="blue" sub={`$${s.total_capital_at_risk.toLocaleString()} at risk`} />
+          <KPICard label="Max Drawdown" value={`$${s.max_drawdown.toFixed(0)}`} color={s.max_drawdown > 0 ? "red" : "green"} sub="peak to trough" />
+          <KPICard label="Avg Holding" value={`${s.avg_holding_days.toFixed(0)}d`} color="blue" sub={`W:${s.avg_win_holding_days.toFixed(0)}d L:${s.avg_loss_holding_days.toFixed(0)}d`} />
         </div>
       )}
 
       {/* Score Analysis */}
       {s && s.closed_trades > 0 && (
         <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-          <h3 className="text-sm font-medium text-gray-400 mb-3">Score vs Outcome</h3>
-          <div className="grid grid-cols-2 gap-4">
+          <h3 className="text-sm font-medium text-gray-400 mb-3">Score vs Outcome (Scoring Model Validation)</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="text-center">
               <div className="text-2xl font-bold text-green-400">{s.avg_winning_score.toFixed(0)}</div>
               <div className="text-xs text-gray-500">Avg Score (Winners)</div>
@@ -605,11 +667,17 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
               <div className="text-2xl font-bold text-red-400">{s.avg_losing_score.toFixed(0)}</div>
               <div className="text-xs text-gray-500">Avg Score (Losers)</div>
             </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-green-400">${s.gross_wins.toFixed(0)}</div>
+              <div className="text-xs text-gray-500">Gross Wins</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-red-400">-${s.gross_losses.toFixed(0)}</div>
+              <div className="text-xs text-gray-500">Gross Losses</div>
+            </div>
           </div>
-          {s.avg_winning_score > s.avg_losing_score && (
-            <p className="text-xs text-gray-500 text-center mt-2">
-              Higher-scored trades are winning more often — the scoring model has edge.
-            </p>
+          {s.avg_winning_score > s.avg_losing_score && s.avg_losing_score > 0 && (
+            <p className="text-xs text-gray-500 text-center mt-2">Higher-scored trades win more — the scoring model has predictive edge.</p>
           )}
         </div>
       )}
@@ -617,24 +685,13 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
       {/* Charts Row */}
       {stats && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Win Rate Donut */}
           <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
             <h3 className="text-sm font-medium text-gray-400 mb-2">Win Rate</h3>
-            <WinRateDonut
-              winRate={s?.win_rate ?? 0}
-              wins={s?.winning_trades ?? 0}
-              losses={s?.losing_trades ?? 0}
-            />
+            <WinRateDonut winRate={s?.win_rate ?? 0} wins={s?.winning_trades ?? 0} losses={s?.losing_trades ?? 0} />
           </div>
-
-          {/* Cumulative P&L */}
           <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 lg:col-span-2">
             <h3 className="text-sm font-medium text-gray-400 mb-2">Cumulative P&L</h3>
-            {stats.pnlTimeline.length > 0 ? (
-              <CumulativePnLChart timeline={stats.pnlTimeline} />
-            ) : (
-              <div className="text-gray-600 text-sm text-center py-8">Close some trades to see the P&L curve</div>
-            )}
+            {stats.pnlTimeline.length > 0 ? <CumulativePnLChart timeline={stats.pnlTimeline} /> : <div className="text-gray-600 text-sm text-center py-8">Close some trades to see the P&L curve</div>}
           </div>
         </div>
       )}
@@ -663,15 +720,7 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
           <h3 className="text-sm font-medium text-gray-400">Trade History</h3>
           <div className="flex gap-1">
             {(["all", "OPEN", "closed"] as const).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                  filter === f
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-700 text-gray-400 hover:text-white"
-                }`}
-              >
+              <button key={f} onClick={() => setFilter(f)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${filter === f ? "bg-blue-600 text-white" : "bg-gray-700 text-gray-400 hover:text-white"}`}>
                 {f === "all" ? "All" : f === "OPEN" ? "Open" : "Closed"}
               </button>
             ))}
@@ -680,36 +729,18 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
 
         {filteredTrades.length === 0 ? (
           <div className="text-center py-8 text-gray-600 text-sm">
-            {trades.length === 0
-              ? "No trades yet. Use the screener to find puts and click \"Simulate Trade\" to get started."
-              : "No trades match this filter."}
+            {trades.length === 0 ? 'No trades yet. Use the screener to find puts and click "Simulate Trade" to get started.' : "No trades match this filter."}
           </div>
         ) : (
           <div className="space-y-2">
             {filteredTrades.map((trade) => (
-              <TradeCard
-                key={trade.id}
-                trade={trade}
-                onClose={() => setClosingTrade(trade)}
-                onDelete={() => handleDelete(trade.id)}
-                deleting={deletingId === trade.id}
-              />
+              <TradeCard key={trade.id} trade={trade} onClose={() => setClosingTrade(trade)} onDelete={() => handleDelete(trade.id)} deleting={deletingId === trade.id} />
             ))}
           </div>
         )}
       </div>
 
-      {/* Close Trade Modal */}
-      {closingTrade && (
-        <CloseTradeModal
-          trade={closingTrade}
-          onClose={() => setClosingTrade(null)}
-          onSuccess={() => {
-            setClosingTrade(null);
-            fetchData();
-          }}
-        />
-      )}
+      {closingTrade && <CloseTradeModal trade={closingTrade} onClose={() => setClosingTrade(null)} onSuccess={() => { setClosingTrade(null); fetchData(); }} />}
     </div>
   );
 }
@@ -717,12 +748,7 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
 // ─── Sub-components ────────────────────────────────────────────────
 
 function KPICard({ label, value, color, sub }: { label: string; value: string; color: string; sub: string }) {
-  const colorMap: Record<string, string> = {
-    green: "text-green-400",
-    red: "text-red-400",
-    yellow: "text-yellow-400",
-    blue: "text-blue-400",
-  };
+  const colorMap: Record<string, string> = { green: "text-green-400", red: "text-red-400", yellow: "text-yellow-400", blue: "text-blue-400" };
   return (
     <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-3">
       <div className="text-xs text-gray-500 mb-1">{label}</div>
@@ -744,28 +770,37 @@ function TradeCard({ trade, onClose, onDelete, deleting }: { trade: Trade; onClo
   const sc = statusConfig[trade.status] ?? statusConfig.OPEN;
   const premium = Number(trade.premium_received);
   const pnl = trade.pnl ? Number(trade.pnl) : null;
+  const qty = trade.quantity ?? 1;
   const daysOpen = trade.closed_at
     ? Math.ceil((new Date(trade.closed_at).getTime() - new Date(trade.created_at).getTime()) / 86400000)
     : Math.ceil((Date.now() - new Date(trade.created_at).getTime()) / 86400000);
+
+  // Days to expiration for open trades
+  const daysToExp = trade.status === "OPEN"
+    ? Math.ceil((new Date(trade.expiration).getTime() - Date.now()) / 86400000)
+    : null;
 
   return (
     <div className={`rounded-lg border p-3 ${sc.bg}`}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-white font-bold">{trade.symbol}</span>
-              <span className={`px-2 py-0.5 rounded text-[10px] font-medium border ${sc.bg} ${sc.color}`}>
-                {sc.label}
-              </span>
-              {trade.score_at_entry && (
-                <span className="text-xs text-gray-500">Score: {Number(trade.score_at_entry).toFixed(0)}</span>
+              <span className={`px-2 py-0.5 rounded text-[10px] font-medium border ${sc.bg} ${sc.color}`}>{sc.label}</span>
+              {qty > 1 && <span className="text-xs text-gray-500">x{qty}</span>}
+              {trade.score_at_entry && <span className="text-xs text-gray-500">Score: {Number(trade.score_at_entry).toFixed(0)}</span>}
+              {daysToExp !== null && daysToExp <= 21 && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${daysToExp <= 7 ? "bg-red-900/40 text-red-400" : "bg-yellow-900/40 text-yellow-400"}`}>
+                  {daysToExp}d to exp
+                </span>
               )}
             </div>
             <div className="text-xs text-gray-500 mt-0.5">
-              ${Number(trade.strike_price).toFixed(0)} put &middot; exp {trade.expiration} &middot;
-              Premium ${premium.toFixed(2)} &middot;
-              {daysOpen}d {trade.status === "OPEN" ? "open" : "held"}
+              ${Number(trade.strike_price).toFixed(0)} put &middot; exp {trade.expiration} &middot; Premium ${premium.toFixed(2)} &middot; {daysOpen}d {trade.status === "OPEN" ? "open" : "held"}
+              {trade.profit_target_price && trade.status === "OPEN" && (
+                <span className="text-gray-600"> &middot; Target: ${Number(trade.profit_target_price).toFixed(2)} | Stop: ${Number(trade.stop_loss_price).toFixed(2)}</span>
+              )}
             </div>
           </div>
         </div>
@@ -773,30 +808,14 @@ function TradeCard({ trade, onClose, onDelete, deleting }: { trade: Trade; onClo
         <div className="flex items-center gap-3">
           {pnl !== null && (
             <div className="text-right">
-              <div className={`font-bold ${pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
-                {pnl >= 0 ? "+" : ""}${pnl.toFixed(0)}
-              </div>
-              <div className="text-[10px] text-gray-500">
-                {trade.pnl_percent ? `${Number(trade.pnl_percent).toFixed(2)}%` : ""}
-              </div>
+              <div className={`font-bold ${pnl >= 0 ? "text-green-400" : "text-red-400"}`}>{pnl >= 0 ? "+" : ""}${pnl.toFixed(0)}</div>
+              <div className="text-[10px] text-gray-500">{trade.pnl_percent ? `${Number(trade.pnl_percent).toFixed(2)}%` : ""}</div>
             </div>
           )}
           {trade.status === "OPEN" && (
-            <button
-              onClick={onClose}
-              className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
-            >
-              Close
-            </button>
+            <button onClick={onClose} className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">Close</button>
           )}
-          <button
-            onClick={onDelete}
-            disabled={deleting}
-            className="px-2 py-1.5 text-xs bg-gray-700 hover:bg-red-900/50 text-gray-500 hover:text-red-400 rounded-lg transition-colors"
-            title="Delete trade"
-          >
-            {deleting ? "..." : "\u2715"}
-          </button>
+          <button onClick={onDelete} disabled={deleting} className="px-2 py-1.5 text-xs bg-gray-700 hover:bg-red-900/50 text-gray-500 hover:text-red-400 rounded-lg transition-colors" title="Delete trade">{deleting ? "..." : "\u2715"}</button>
         </div>
       </div>
     </div>

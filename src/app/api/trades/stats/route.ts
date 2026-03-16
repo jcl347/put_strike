@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * GET /api/trades/stats — Aggregate statistics for simulated trades
+ * Includes tastytrade-aligned metrics: profit factor, avg holding period, max drawdown
  */
 export async function GET() {
   const db = getDb();
@@ -30,7 +31,12 @@ export async function GET() {
         COALESCE(MIN(pnl) FILTER (WHERE status != 'OPEN'), 0)::float AS worst_trade_pnl,
         COALESCE(SUM(collateral) FILTER (WHERE status = 'OPEN'), 0)::float AS total_capital_at_risk,
         COALESCE(AVG(score_at_entry) FILTER (WHERE status != 'OPEN' AND pnl > 0), 0)::float AS avg_winning_score,
-        COALESCE(AVG(score_at_entry) FILTER (WHERE status != 'OPEN' AND pnl <= 0), 0)::float AS avg_losing_score
+        COALESCE(AVG(score_at_entry) FILTER (WHERE status != 'OPEN' AND pnl <= 0), 0)::float AS avg_losing_score,
+        COALESCE(SUM(pnl) FILTER (WHERE pnl > 0 AND status != 'OPEN'), 0)::float AS gross_wins,
+        COALESCE(ABS(SUM(pnl) FILTER (WHERE pnl < 0 AND status != 'OPEN')), 0)::float AS gross_losses,
+        COALESCE(AVG(EXTRACT(DAY FROM (closed_at - created_at))) FILTER (WHERE status != 'OPEN'), 0)::float AS avg_holding_days,
+        COALESCE(AVG(EXTRACT(DAY FROM (closed_at - created_at))) FILTER (WHERE pnl > 0 AND status != 'OPEN'), 0)::float AS avg_win_holding_days,
+        COALESCE(AVG(EXTRACT(DAY FROM (closed_at - created_at))) FILTER (WHERE pnl <= 0 AND status != 'OPEN'), 0)::float AS avg_loss_holding_days
       FROM simulated_trades
     `;
 
@@ -47,7 +53,7 @@ export async function GET() {
       ORDER BY month
     `;
 
-    // Cumulative P&L timeline (per closed trade)
+    // Cumulative P&L timeline (per closed trade) — for equity curve + drawdown calc
     const pnlTimeline = await db`
       SELECT
         id,
@@ -77,14 +83,26 @@ export async function GET() {
 
     const stats = overall[0];
     const closedTrades = stats.closed_trades || 0;
-    const winRate = closedTrades > 0
-      ? ((stats.winning_trades / closedTrades) * 100)
-      : 0;
+    const winRate = closedTrades > 0 ? ((stats.winning_trades / closedTrades) * 100) : 0;
+
+    // Profit factor = gross wins / gross losses (tastytrade key metric)
+    const profitFactor = stats.gross_losses > 0 ? stats.gross_wins / stats.gross_losses : stats.gross_wins > 0 ? Infinity : 0;
+
+    // Max drawdown from equity curve
+    let maxDrawdown = 0;
+    let peak = 0;
+    for (const point of pnlTimeline) {
+      if (point.cumulative_pnl > peak) peak = point.cumulative_pnl;
+      const dd = peak - point.cumulative_pnl;
+      if (dd > maxDrawdown) maxDrawdown = dd;
+    }
 
     return NextResponse.json({
       summary: {
         ...stats,
         win_rate: winRate,
+        profit_factor: profitFactor === Infinity ? 999 : profitFactor,
+        max_drawdown: maxDrawdown,
       },
       monthlyPnl,
       pnlTimeline,
