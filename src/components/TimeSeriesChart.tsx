@@ -20,6 +20,8 @@ interface TimeSeriesChartProps {
     lower_95: number[];
     upper_95: number[];
   };
+  /** Model directional accuracy confidence (0-1) */
+  modelConfidence?: number;
   /** DTE markers to show on the forecast (e.g., put expiration dates) */
   dteMarkers?: { dte: number; label: string }[];
 }
@@ -30,6 +32,7 @@ export default function TimeSeriesChart({
   currentPrice,
   symbol,
   confidence,
+  modelConfidence,
   dteMarkers,
 }: TimeSeriesChartProps) {
   if (!predictedPrices || predictedPrices.length === 0) return null;
@@ -145,6 +148,19 @@ export default function TimeSeriesChart({
             {isUp ? "+" : ""}
             {returnPct}% (60d)
           </span>
+          {modelConfidence != null && (
+            <span
+              className={`text-xs px-1.5 py-0.5 rounded ${
+                modelConfidence >= 0.6
+                  ? "bg-green-900/20 text-green-500"
+                  : modelConfidence >= 0.5
+                  ? "bg-yellow-900/20 text-yellow-500"
+                  : "bg-gray-800 text-gray-500"
+              }`}
+            >
+              {(modelConfidence * 100).toFixed(0)}% confidence
+            </span>
+          )}
         </div>
         <span className="text-[10px] text-gray-600">
           ONNX &middot; 60d lookback &middot; {predictedPrices.length}d forecast

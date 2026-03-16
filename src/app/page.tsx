@@ -736,6 +736,7 @@ export default function Home() {
                 currentPrice={singleForecast.current_price}
                 symbol={analysis.symbol}
                 confidence={singleForecast.confidence}
+                modelConfidence={singleForecast.model_confidence}
                 dteMarkers={filteredAnalysisPuts.slice(0, 3).map((p: any) => ({
                   dte: p.dte,
                   label: `${p.strikePrice} (${p.dte}d)`,
@@ -907,6 +908,7 @@ export default function Home() {
                         currentPrice={fc.current_price}
                         symbol={sym}
                         confidence={fc.confidence}
+                        modelConfidence={fc.model_confidence}
                       />
                     );
                   }
