@@ -29,7 +29,7 @@ export async function GET() {
       SELECT
         COALESCE(SUM(pnl), 0)::float AS realized_pnl,
         COALESCE(SUM(collateral) FILTER (WHERE status = 'OPEN'), 0)::float AS capital_deployed,
-        COALESCE(SUM(premium_received * COALESCE(quantity, 1) * 100) FILTER (WHERE status = 'OPEN'), 0)::float AS unrealized_premium
+        COALESCE(SUM(premium_received * COALESCE(quantity, 1) * COALESCE(contract_size, 100)) FILTER (WHERE status = 'OPEN'), 0)::float AS unrealized_premium
       FROM simulated_trades
     `;
 

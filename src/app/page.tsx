@@ -736,26 +736,44 @@ export default function Home() {
           )}
           {singleForecast && singleForecastData && !singleForecastLoading && singleForecast.symbol === analysis.symbol && (
             <>
-              <TimeSeriesChart
-                historicalPrices={singleForecastData.historicalPrices}
-                predictedPrices={singleForecast.predicted_prices}
-                currentPrice={singleForecast.current_price}
-                symbol={analysis.symbol}
-                confidence={singleForecast.confidence}
-                modelConfidence={singleForecast.model_confidence}
-                dteMarkers={filteredAnalysisPuts.slice(0, 3).map((p: any) => ({
-                  dte: p.dte,
-                  label: `${p.strikePrice} (${p.dte}d)`,
-                }))}
-              />
+              {singleForecast.model_confidence < 0.55 ? (
+                <div className="bg-gray-800/50 border border-orange-700/50 rounded-lg px-4 py-3 flex items-start gap-2">
+                  <span className="text-orange-500 text-sm mt-0.5">&#9888;</span>
+                  <div>
+                    <p className="text-sm text-orange-400">Low Confidence iTransformer Forecast</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {analysis.symbol} model has {(singleForecast.model_confidence * 100).toFixed(0)}% directional accuracy (30d),
+                      which is near random (50%). Predictions are hidden to avoid misleading signals.
+                    </p>
+                    <p className="text-[10px] text-gray-600 mt-1">
+                      Threshold: 55% directional accuracy required for display. This stock may benefit from additional training data or feature engineering.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <TimeSeriesChart
+                    historicalPrices={singleForecastData.historicalPrices}
+                    predictedPrices={singleForecast.predicted_prices}
+                    currentPrice={singleForecast.current_price}
+                    symbol={analysis.symbol}
+                    confidence={singleForecast.confidence}
+                    modelConfidence={singleForecast.model_confidence}
+                    dteMarkers={filteredAnalysisPuts.slice(0, 3).map((p: any) => ({
+                      dte: p.dte,
+                      label: `${p.strikePrice} (${p.dte}d)`,
+                    }))}
+                  />
 
-              {/* Concordance Validation — iTransformer vs Statistical Ensemble */}
-              {prediction && prediction.symbol === analysis.symbol && (
-                <ConcordanceCard
-                  iTransformerForecast={singleForecast}
-                  ensemblePrediction={prediction}
-                  symbol={analysis.symbol}
-                />
+                  {/* Concordance Validation — iTransformer vs Statistical Ensemble */}
+                  {prediction && prediction.symbol === analysis.symbol && (
+                    <ConcordanceCard
+                      iTransformerForecast={singleForecast}
+                      ensemblePrediction={prediction}
+                      symbol={analysis.symbol}
+                    />
+                  )}
+                </>
               )}
             </>
           )}
@@ -917,6 +935,17 @@ export default function Home() {
               </h3>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                 {Object.entries(screenerForecasts).map(([sym, fc]: [string, any]) => {
+                  // Filter out low-confidence models (< 55% directional accuracy)
+                  if (fc.model_confidence < 0.55) {
+                    return (
+                      <div key={sym} className="bg-gray-800/30 border border-orange-700/30 rounded-lg px-3 py-2 flex items-center gap-2">
+                        <span className="text-orange-500 text-xs">&#9888;</span>
+                        <span className="text-xs text-gray-500">
+                          {sym}: {(fc.model_confidence * 100).toFixed(0)}% accuracy — forecast hidden (below 55% threshold)
+                        </span>
+                      </div>
+                    );
+                  }
                   const historicalPrices = fc._historicalPrices;
                   if (historicalPrices && fc.predicted_prices?.length > 0) {
                     return (

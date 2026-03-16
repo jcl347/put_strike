@@ -36,7 +36,9 @@ export async function GET() {
         COALESCE(ABS(SUM(pnl) FILTER (WHERE pnl < 0 AND status != 'OPEN')), 0)::float AS gross_losses,
         COALESCE(AVG(EXTRACT(DAY FROM (closed_at - created_at))) FILTER (WHERE status != 'OPEN'), 0)::float AS avg_holding_days,
         COALESCE(AVG(EXTRACT(DAY FROM (closed_at - created_at))) FILTER (WHERE pnl > 0 AND status != 'OPEN'), 0)::float AS avg_win_holding_days,
-        COALESCE(AVG(EXTRACT(DAY FROM (closed_at - created_at))) FILTER (WHERE pnl <= 0 AND status != 'OPEN'), 0)::float AS avg_loss_holding_days
+        COALESCE(AVG(EXTRACT(DAY FROM (closed_at - created_at))) FILTER (WHERE pnl <= 0 AND status != 'OPEN'), 0)::float AS avg_loss_holding_days,
+        COALESCE(SUM(COALESCE(total_premium, premium_received * COALESCE(quantity, 1) * COALESCE(contract_size, 100))), 0)::float AS total_premium_collected,
+        COALESCE(SUM(COALESCE(total_premium, premium_received * COALESCE(quantity, 1) * COALESCE(contract_size, 100))) FILTER (WHERE status = 'OPEN'), 0)::float AS open_premium
       FROM simulated_trades
     `;
 
@@ -103,6 +105,8 @@ export async function GET() {
         win_rate: winRate,
         profit_factor: profitFactor === Infinity ? 999 : profitFactor,
         max_drawdown: maxDrawdown,
+        total_premium_collected: stats.total_premium_collected,
+        open_premium: stats.open_premium,
       },
       monthlyPnl,
       pnlTimeline,

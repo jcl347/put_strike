@@ -27,6 +27,8 @@ interface TradeStats {
     avg_holding_days: number;
     avg_win_holding_days: number;
     avg_loss_holding_days: number;
+    total_premium_collected: number;
+    open_premium: number;
   };
   monthlyPnl: { month: string; pnl: number; trades: number; wins: number }[];
   pnlTimeline: { id: number; symbol: string; pnl: number; pnl_percent: number; closed_at: string; cumulative_pnl: number }[];
@@ -72,6 +74,7 @@ interface Trade {
   stop_loss_price: string | null;
   management_date: string | null;
   quantity: number | null;
+  contract_size: number | null;
 }
 
 interface TradesDashboardProps {
@@ -431,14 +434,15 @@ function CloseTradeModal({ trade, onClose, onSuccess }: { trade: Trade; onClose:
 
   const premium = Number(trade.premium_received);
   const collateral = Number(trade.collateral);
+  const cSize = trade.contract_size ?? 100;
 
   let previewPnl = 0;
   if (status === "EXPIRED") {
-    previewPnl = premium * 100;
+    previewPnl = premium * cSize;
   } else if (status === "ASSIGNED" && stockPrice) {
-    previewPnl = premium * 100 - (Number(trade.strike_price) - Number(stockPrice)) * 100;
+    previewPnl = premium * cSize - (Number(trade.strike_price) - Number(stockPrice)) * cSize;
   } else if (closePrice) {
-    previewPnl = (premium - Number(closePrice)) * 100;
+    previewPnl = (premium - Number(closePrice)) * cSize;
   }
 
   // Apply quantity
@@ -666,6 +670,7 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
           <KPICard label="Open Trades" value={String(s.open_trades)} color="blue" sub={`$${s.total_capital_at_risk.toLocaleString()} at risk`} />
           <KPICard label="Max Drawdown" value={`$${s.max_drawdown.toFixed(0)}`} color={s.max_drawdown > 0 ? "red" : "green"} sub="peak to trough" />
           <KPICard label="Avg Holding" value={`${s.avg_holding_days.toFixed(0)}d`} color="blue" sub={`W:${s.avg_win_holding_days.toFixed(0)}d L:${s.avg_loss_holding_days.toFixed(0)}d`} />
+          <KPICard label="Premium Collected" value={`$${(s.total_premium_collected ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} color="green" sub={`$${(s.open_premium ?? 0).toFixed(0)} in open trades`} />
         </div>
       )}
 
