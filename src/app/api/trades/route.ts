@@ -74,6 +74,7 @@ export async function POST(request: NextRequest) {
       vixAtEntry,
       marketRegimeAtEntry,
       quantity,
+      contractSize,
       notes,
     } = body;
 
@@ -85,7 +86,9 @@ export async function POST(request: NextRequest) {
     }
 
     const qty = quantity ?? 1;
-    const collateral = strikePrice * 100 * qty;
+    const cSize = contractSize ?? 100;
+    const collateral = strikePrice * cSize * qty;
+    const totalPremium = premiumReceived * cSize * qty;
 
     // Management targets (research-backed defaults)
     // Profit target: 50% of premium (strongly validated by tastytrade, DataDrivenOptions).
@@ -109,13 +112,15 @@ export async function POST(request: NextRequest) {
         symbol, company_name, strike_price, expiration, dte_at_entry,
         premium_received, stock_price_at_entry, delta_at_entry,
         score_at_entry, stability_score_at_entry, iv_rank_at_entry,
-        collateral, quantity, profit_target_price, stop_loss_price,
+        collateral, quantity, contract_size, total_premium,
+        profit_target_price, stop_loss_price,
         management_date, vix_at_entry, market_regime_at_entry, notes
       ) VALUES (
         ${symbol}, ${companyName ?? null}, ${strikePrice}, ${expiration}, ${dteAtEntry ?? 0},
         ${premiumReceived}, ${stockPriceAtEntry}, ${deltaAtEntry ?? null},
         ${scoreAtEntry ?? null}, ${stabilityScoreAtEntry ?? null}, ${ivRankAtEntry ?? null},
-        ${collateral}, ${qty}, ${profitTargetPrice}, ${stopLossPrice},
+        ${collateral}, ${qty}, ${cSize}, ${totalPremium},
+        ${profitTargetPrice}, ${stopLossPrice},
         ${managementDate}, ${vixAtEntry ?? null}, ${marketRegimeAtEntry ?? null},
         ${notes ?? null}
       )

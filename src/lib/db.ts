@@ -68,6 +68,8 @@ export async function ensureSchema() {
       ALTER TABLE simulated_trades ADD COLUMN IF NOT EXISTS vix_at_entry DECIMAL(5,2);
       ALTER TABLE simulated_trades ADD COLUMN IF NOT EXISTS market_regime_at_entry VARCHAR(20);
       ALTER TABLE simulated_trades ADD COLUMN IF NOT EXISTS quantity INTEGER DEFAULT 1;
+      ALTER TABLE simulated_trades ADD COLUMN IF NOT EXISTS contract_size INTEGER DEFAULT 100;
+      ALTER TABLE simulated_trades ADD COLUMN IF NOT EXISTS total_premium DECIMAL(12,2);
     END $$
   `;
 

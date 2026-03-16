@@ -36,19 +36,21 @@ export async function PUT(
     const trade = existing[0];
     const premiumReceived = Number(trade.premium_received);
     const collateral = Number(trade.collateral);
+    const cSize = Number(trade.contract_size) || 100;
+    const qty = Number(trade.quantity) || 1;
 
-    // Calculate P&L
+    // Calculate P&L using stored contract_size and quantity
     let pnl: number;
     if (status === "EXPIRED") {
       // Put expired worthless — keep full premium
-      pnl = premiumReceived * 100;
+      pnl = premiumReceived * cSize * qty;
     } else if (status === "ASSIGNED") {
-      // Assigned — P&L = premium received - (strike - stock price at close) per share * 100
-      const assignmentLoss = (Number(trade.strike_price) - (stockPriceAtClose ?? 0)) * 100;
-      pnl = premiumReceived * 100 - assignmentLoss;
+      // Assigned — P&L = premium received - (strike - stock price at close) per share * contract_size
+      const assignmentLoss = (Number(trade.strike_price) - (stockPriceAtClose ?? 0)) * cSize * qty;
+      pnl = premiumReceived * cSize * qty - assignmentLoss;
     } else {
-      // Closed — P&L = (premium received - close price) * 100
-      pnl = (premiumReceived - (closePrice ?? 0)) * 100;
+      // Closed — P&L = (premium received - close price) * contract_size
+      pnl = (premiumReceived - (closePrice ?? 0)) * cSize * qty;
     }
 
     const pnlPercent = collateral > 0 ? (pnl / collateral) * 100 : 0;

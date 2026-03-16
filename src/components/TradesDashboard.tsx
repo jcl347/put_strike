@@ -27,6 +27,8 @@ interface TradeStats {
     avg_holding_days: number;
     avg_win_holding_days: number;
     avg_loss_holding_days: number;
+    total_premium_collected: number;
+    open_premium: number;
   };
   monthlyPnl: { month: string; pnl: number; trades: number; wins: number }[];
   pnlTimeline: { id: number; symbol: string; pnl: number; pnl_percent: number; closed_at: string; cumulative_pnl: number }[];
@@ -72,6 +74,7 @@ interface Trade {
   stop_loss_price: string | null;
   management_date: string | null;
   quantity: number | null;
+  contract_size: number | null;
 }
 
 interface TradesDashboardProps {
@@ -349,27 +352,38 @@ function CapitalSection({ capital, onRefresh }: { capital: CapitalData | null; o
   );
 }
 
-// ─── Tastytrade Alerts ─────────────────────────────────────────────
+// ─── Tastytrade Management Actions ────────────────────────────────
 
-function ManagementAlerts({ trades }: { trades: Trade[] }) {
+type ManagementAction = "close_profit" | "close_stop" | "close_custom" | "roll" | "expire";
+
+interface AlertItem {
+  trade: Trade;
+  type: string;
+  urgency: "high" | "medium" | "low";
+  message: string;
+  suggestedAction?: ManagementAction;
+}
+
+function ManagementAlerts({ trades, onAction }: { trades: Trade[]; onAction: (trade: Trade, action: ManagementAction) => void }) {
   const openTrades = trades.filter((t) => t.status === "OPEN");
   if (openTrades.length === 0) return null;
 
   const today = new Date();
-  const alerts: { trade: Trade; type: string; urgency: "high" | "medium" | "low"; message: string }[] = [];
+  const alerts: AlertItem[] = [];
 
   for (const trade of openTrades) {
     const expDate = new Date(trade.expiration);
     const daysToExp = Math.ceil((expDate.getTime() - today.getTime()) / 86400000);
     const mgmtDate = trade.management_date ? new Date(trade.management_date) : null;
 
-    // 21 DTE management alert
+    // 21 DTE management alert — most validated tastytrade rule
     if (daysToExp <= 21) {
       alerts.push({
         trade,
         type: "21 DTE",
         urgency: daysToExp <= 7 ? "high" : "medium",
-        message: `${daysToExp}d to expiration — evaluate roll or close`,
+        message: `${daysToExp}d to expiration — roll or close to reduce gamma risk`,
+        suggestedAction: daysToExp <= 7 ? "close_custom" : "roll",
       });
     } else if (mgmtDate && today >= mgmtDate) {
       alerts.push({
@@ -377,6 +391,18 @@ function ManagementAlerts({ trades }: { trades: Trade[] }) {
         type: "MGMT DATE",
         urgency: "medium",
         message: "Management date reached — review position",
+        suggestedAction: "roll",
+      });
+    }
+
+    // 50% profit target reached check (informational — user provides actual market price)
+    if (trade.profit_target_price) {
+      alerts.push({
+        trade,
+        type: "TARGET",
+        urgency: "low",
+        message: `50% profit target: buy back at $${Number(trade.profit_target_price).toFixed(2)}`,
+        suggestedAction: "close_profit",
       });
     }
 
@@ -387,6 +413,7 @@ function ManagementAlerts({ trades }: { trades: Trade[] }) {
         type: "EXPIRING",
         urgency: "high",
         message: `Expires in ${daysToExp} day${daysToExp > 1 ? "s" : ""} — close or let expire`,
+        suggestedAction: "expire",
       });
     }
   }
@@ -394,27 +421,279 @@ function ManagementAlerts({ trades }: { trades: Trade[] }) {
   if (alerts.length === 0) return null;
 
   const urgencyColors = {
-    high: "bg-red-900/30 border-red-700/40 text-red-400",
-    medium: "bg-yellow-900/30 border-yellow-700/40 text-yellow-400",
-    low: "bg-blue-900/30 border-blue-700/40 text-blue-400",
+    high: "bg-red-900/30 border-red-700/40",
+    medium: "bg-yellow-900/30 border-yellow-700/40",
+    low: "bg-blue-900/30 border-blue-700/40",
+  };
+
+  const urgencyText = { high: "text-red-400", medium: "text-yellow-400", low: "text-blue-400" };
+
+  const actionLabels: Record<ManagementAction, { label: string; color: string }> = {
+    close_profit: { label: "Close at 50%", color: "bg-green-700 hover:bg-green-600 text-white" },
+    close_stop: { label: "Close at Stop", color: "bg-red-700 hover:bg-red-600 text-white" },
+    close_custom: { label: "Close", color: "bg-blue-700 hover:bg-blue-600 text-white" },
+    roll: { label: "Roll", color: "bg-purple-700 hover:bg-purple-600 text-white" },
+    expire: { label: "Let Expire", color: "bg-gray-700 hover:bg-gray-600 text-white" },
   };
 
   return (
     <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-      <h3 className="text-sm font-medium text-gray-400 mb-2">Management Alerts</h3>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-medium text-gray-400">Tastytrade Management Alerts</h3>
+        <span className="text-[10px] text-gray-600">Research-backed actions per tastytrade methodology</span>
+      </div>
       <div className="space-y-1.5">
         {alerts.map((a, i) => (
           <div key={i} className={`px-3 py-2 rounded-lg border text-xs flex items-center gap-2 ${urgencyColors[a.urgency]}`}>
-            <span className="font-bold">{a.trade.symbol}</span>
-            <span className="px-1.5 py-0.5 rounded bg-gray-800/50 text-[10px] font-medium">{a.type}</span>
-            <span>{a.message}</span>
-            {a.trade.profit_target_price && (
-              <span className="ml-auto text-gray-500">
-                Target: ${Number(a.trade.profit_target_price).toFixed(2)} | Stop: ${Number(a.trade.stop_loss_price).toFixed(2)}
+            <span className={`font-bold ${urgencyText[a.urgency]}`}>{a.trade.symbol}</span>
+            <span className={`px-1.5 py-0.5 rounded bg-gray-800/50 text-[10px] font-medium ${urgencyText[a.urgency]}`}>{a.type}</span>
+            <span className="text-gray-300 flex-1">{a.message}</span>
+            {a.trade.profit_target_price && a.type !== "TARGET" && (
+              <span className="text-gray-600 text-[10px]">
+                T:${Number(a.trade.profit_target_price).toFixed(2)} S:${Number(a.trade.stop_loss_price).toFixed(2)}
               </span>
+            )}
+            {a.suggestedAction && (
+              <button
+                onClick={() => onAction(a.trade, a.suggestedAction!)}
+                className={`px-2 py-1 rounded text-[10px] font-medium ${actionLabels[a.suggestedAction].color}`}
+              >
+                {actionLabels[a.suggestedAction].label}
+              </button>
             )}
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Roll Trade Modal ─────────────────────────────────────────────
+
+function RollTradeModal({ trade, onClose, onSuccess }: { trade: Trade; onClose: () => void; onSuccess: () => void }) {
+  const [rollType, setRollType] = useState<"OUT" | "DOWN" | "DOWN_AND_OUT">("OUT");
+  const [closePrice, setClosePrice] = useState("");
+  const [newStrike, setNewStrike] = useState(Number(trade.strike_price).toFixed(2));
+  const [newExpiration, setNewExpiration] = useState("");
+  const [newPremium, setNewPremium] = useState("");
+  const [newDte, setNewDte] = useState("");
+  const [stockPrice, setStockPrice] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const premium = Number(trade.premium_received);
+  const cSize = trade.contract_size ?? 100;
+  const qty = trade.quantity ?? 1;
+
+  // Net credit calculation
+  const closeCost = closePrice ? Number(closePrice) : 0;
+  const newPrem = newPremium ? Number(newPremium) : 0;
+  const netCredit = newPrem - closeCost;
+  const isNetCredit = netCredit > 0;
+
+  // P&L on closed leg
+  const closePnl = closeCost > 0 ? (premium - closeCost) * cSize * qty : 0;
+
+  // Set default expiration to 30 days from current expiration (typical roll)
+  const getDefaultExpiration = () => {
+    const exp = new Date(trade.expiration);
+    exp.setDate(exp.getDate() + 30);
+    return exp.toISOString().split("T")[0];
+  };
+
+  // When rollType changes, adjust new strike
+  const handleRollTypeChange = (type: "OUT" | "DOWN" | "DOWN_AND_OUT") => {
+    setRollType(type);
+    if (type === "OUT") {
+      setNewStrike(Number(trade.strike_price).toFixed(2));
+    }
+    if (!newExpiration) {
+      setNewExpiration(getDefaultExpiration());
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!closePrice || !newStrike || !newExpiration || !newPremium || !stockPrice) {
+      setError("All fields are required");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/trades/roll", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tradeId: trade.id,
+          closePrice: Number(closePrice),
+          newStrikePrice: Number(newStrike),
+          newExpiration,
+          newPremium: Number(newPremium),
+          newDte: newDte ? Number(newDte) : undefined,
+          stockPriceAtRoll: Number(stockPrice),
+          rollType,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(data.error || `Failed (${res.status})`);
+      }
+
+      onSuccess();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to roll trade");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-white">Roll Trade: {trade.symbol}</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-white text-xl leading-none">&times;</button>
+        </div>
+
+        {/* Current Position */}
+        <div className="bg-gray-800/70 rounded-lg p-3 mb-4 text-sm space-y-1">
+          <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-1">Current Position</div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">Strike</span>
+            <span className="text-white">${Number(trade.strike_price).toFixed(2)} put x{qty}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">Expiration</span>
+            <span className="text-white">{trade.expiration}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">Premium Received</span>
+            <span className="text-green-400">${premium.toFixed(2)}/share</span>
+          </div>
+        </div>
+
+        {/* Roll Type */}
+        <div className="mb-4">
+          <label className="block text-sm text-gray-400 mb-1">Roll Type</label>
+          <div className="grid grid-cols-3 gap-1">
+            {([["OUT", "Roll Out"], ["DOWN", "Roll Down"], ["DOWN_AND_OUT", "Down & Out"]] as const).map(([type, label]) => (
+              <button
+                key={type}
+                onClick={() => handleRollTypeChange(type)}
+                className={`py-1.5 rounded text-xs font-medium transition-colors ${rollType === type ? "bg-purple-600 text-white" : "bg-gray-700 text-gray-400 hover:text-white"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="text-[10px] text-gray-600 mt-1">
+            {rollType === "OUT" && "Same strike, later expiration — collect more time premium"}
+            {rollType === "DOWN" && "Lower strike, same/later exp — reduce assignment risk"}
+            {rollType === "DOWN_AND_OUT" && "Lower strike + later exp — most defensive roll"}
+          </div>
+        </div>
+
+        {/* Close Current */}
+        <div className="space-y-3 mb-4">
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Buy Back Current Put At (per share)</label>
+            <input
+              type="number" step="0.01" value={closePrice} onChange={(e) => setClosePrice(e.target.value)}
+              placeholder={`Stop: $${trade.stop_loss_price ? Number(trade.stop_loss_price).toFixed(2) : ""}`}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-purple-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Current Stock Price</label>
+            <input
+              type="number" step="0.01" value={stockPrice} onChange={(e) => setStockPrice(e.target.value)}
+              placeholder="Stock price now"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-purple-500"
+            />
+          </div>
+        </div>
+
+        {/* New Position */}
+        <div className="bg-purple-900/15 border border-purple-800/30 rounded-lg p-3 mb-4">
+          <div className="text-[10px] text-purple-400 font-medium uppercase tracking-wide mb-2">New Position</div>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">New Strike</label>
+              <input
+                type="number" step="0.01" value={newStrike} onChange={(e) => setNewStrike(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">New Expiration</label>
+              <input
+                type="date" value={newExpiration} onChange={(e) => setNewExpiration(e.target.value)}
+                min={trade.expiration}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">New Premium (per share)</label>
+                <input
+                  type="number" step="0.01" value={newPremium} onChange={(e) => setNewPremium(e.target.value)}
+                  placeholder="Premium received"
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-purple-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">New DTE</label>
+                <input
+                  type="number" value={newDte} onChange={(e) => setNewDte(e.target.value)}
+                  placeholder="Days to exp"
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-purple-500"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Net Credit / Debit Summary */}
+        {closePrice && newPremium && (
+          <div className={`text-center p-3 rounded-lg mb-4 ${isNetCredit ? "bg-green-900/20 border border-green-700/30" : "bg-red-900/20 border border-red-700/30"}`}>
+            <div className="text-xs text-gray-400">Net {isNetCredit ? "Credit" : "Debit"} per Share</div>
+            <div className={`text-xl font-bold ${isNetCredit ? "text-green-400" : "text-red-400"}`}>
+              {isNetCredit ? "+" : "-"}${Math.abs(netCredit).toFixed(2)}
+            </div>
+            <div className="text-xs text-gray-500">
+              Total: {isNetCredit ? "+" : "-"}${(Math.abs(netCredit) * cSize * qty).toFixed(0)}
+            </div>
+            <div className="text-xs text-gray-500 mt-1">
+              Closed leg P&L: {closePnl >= 0 ? "+" : ""}${closePnl.toFixed(0)}
+            </div>
+            {!isNetCredit && (
+              <div className="text-[10px] text-orange-400 mt-1">
+                Tastytrade recommends rolling only for a net credit when possible
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Research note */}
+        <div className="text-[10px] text-gray-600 mb-4 leading-snug">
+          <span className="text-gray-500 font-medium">Tastytrade rolling rules:</span> Roll for a net credit when possible. Roll to 30-45 DTE for optimal theta. Rolling down reduces delta/assignment risk. The 21 DTE rule is the most universally validated management mechanism.
+        </div>
+
+        {error && <div className="mb-3 text-sm text-red-400 bg-red-900/20 border border-red-700/30 rounded px-3 py-2">{error}</div>}
+
+        <div className="flex gap-3">
+          <button onClick={onClose} className="flex-1 px-4 py-2 bg-gray-800 text-gray-400 rounded-lg hover:bg-gray-700 transition-colors text-sm">Cancel</button>
+          <button
+            onClick={handleSubmit}
+            disabled={saving || !closePrice || !newPremium || !stockPrice || !newExpiration}
+            className="flex-1 px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-800 disabled:text-purple-400 text-white font-medium rounded-lg transition-colors text-sm"
+          >
+            {saving ? "Rolling..." : "Roll Position"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -431,14 +710,15 @@ function CloseTradeModal({ trade, onClose, onSuccess }: { trade: Trade; onClose:
 
   const premium = Number(trade.premium_received);
   const collateral = Number(trade.collateral);
+  const cSize = trade.contract_size ?? 100;
 
   let previewPnl = 0;
   if (status === "EXPIRED") {
-    previewPnl = premium * 100;
+    previewPnl = premium * cSize;
   } else if (status === "ASSIGNED" && stockPrice) {
-    previewPnl = premium * 100 - (Number(trade.strike_price) - Number(stockPrice)) * 100;
+    previewPnl = premium * cSize - (Number(trade.strike_price) - Number(stockPrice)) * cSize;
   } else if (closePrice) {
-    previewPnl = (premium - Number(closePrice)) * 100;
+    previewPnl = (premium - Number(closePrice)) * cSize;
   }
 
   // Apply quantity
@@ -516,6 +796,34 @@ function CloseTradeModal({ trade, onClose, onSuccess }: { trade: Trade; onClose:
             <div>
               <label className="block text-sm text-gray-400 mb-1">Close Price (per share)</label>
               <input type="number" step="0.01" value={closePrice} onChange={(e) => setClosePrice(e.target.value)} placeholder={`50% target: $${trade.profit_target_price ? Number(trade.profit_target_price).toFixed(2) : ""}`} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500" />
+              {/* Tastytrade quick-fill buttons */}
+              <div className="flex gap-1.5 mt-1.5">
+                {trade.profit_target_price && (
+                  <button
+                    type="button"
+                    onClick={() => { setClosePrice(Number(trade.profit_target_price).toFixed(2)); setStatus("CLOSED_PROFIT"); }}
+                    className="px-2 py-1 text-[10px] bg-green-900/40 text-green-400 border border-green-700/30 rounded hover:bg-green-900/60 transition-colors"
+                  >
+                    50% Profit (${Number(trade.profit_target_price).toFixed(2)})
+                  </button>
+                )}
+                {trade.stop_loss_price && (
+                  <button
+                    type="button"
+                    onClick={() => { setClosePrice(Number(trade.stop_loss_price).toFixed(2)); setStatus("CLOSED_LOSS"); }}
+                    className="px-2 py-1 text-[10px] bg-red-900/40 text-red-400 border border-red-700/30 rounded hover:bg-red-900/60 transition-colors"
+                  >
+                    2x Stop (${Number(trade.stop_loss_price).toFixed(2)})
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => { setClosePrice((premium * 0.75).toFixed(2)); setStatus("CLOSED_PROFIT"); }}
+                  className="px-2 py-1 text-[10px] bg-gray-700 text-gray-400 border border-gray-600/30 rounded hover:bg-gray-600 transition-colors"
+                >
+                  25% Profit (${(premium * 0.75).toFixed(2)})
+                </button>
+              </div>
             </div>
           )}
 
@@ -553,10 +861,26 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [closingTrade, setClosingTrade] = useState<Trade | null>(null);
+  const [rollingTrade, setRollingTrade] = useState<Trade | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [filter, setFilter] = useState<"all" | "OPEN" | "closed">("all");
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
+
+  // Handle tastytrade management actions from alerts
+  const handleManagementAction = (trade: Trade, action: ManagementAction) => {
+    switch (action) {
+      case "close_profit":
+      case "close_stop":
+      case "close_custom":
+      case "expire":
+        setClosingTrade(trade);
+        break;
+      case "roll":
+        setRollingTrade(trade);
+        break;
+    }
+  };
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -646,7 +970,7 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
   const filteredTrades = trades.filter((t) => {
     if (filter === "all") return true;
     if (filter === "OPEN") return t.status === "OPEN";
-    return t.status !== "OPEN";
+    return t.status !== "OPEN"; // includes CLOSED_PROFIT, CLOSED_LOSS, ASSIGNED, EXPIRED, ROLLED
   });
 
   return (
@@ -654,8 +978,8 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
       {/* Capital Management */}
       <CapitalSection capital={capital} onRefresh={fetchData} />
 
-      {/* Management Alerts */}
-      <ManagementAlerts trades={trades} />
+      {/* Tastytrade Management Alerts */}
+      <ManagementAlerts trades={trades} onAction={handleManagementAction} />
 
       {/* KPI Cards */}
       {s && (
@@ -666,6 +990,7 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
           <KPICard label="Open Trades" value={String(s.open_trades)} color="blue" sub={`$${s.total_capital_at_risk.toLocaleString()} at risk`} />
           <KPICard label="Max Drawdown" value={`$${s.max_drawdown.toFixed(0)}`} color={s.max_drawdown > 0 ? "red" : "green"} sub="peak to trough" />
           <KPICard label="Avg Holding" value={`${s.avg_holding_days.toFixed(0)}d`} color="blue" sub={`W:${s.avg_win_holding_days.toFixed(0)}d L:${s.avg_loss_holding_days.toFixed(0)}d`} />
+          <KPICard label="Premium Collected" value={`$${(s.total_premium_collected ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} color="green" sub={`$${(s.open_premium ?? 0).toFixed(0)} in open trades`} />
         </div>
       )}
 
@@ -760,13 +1085,14 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
         ) : (
           <div className="space-y-2">
             {filteredTrades.map((trade) => (
-              <TradeCard key={trade.id} trade={trade} onClose={() => setClosingTrade(trade)} onDelete={() => handleDelete(trade.id)} deleting={deletingId === trade.id} />
+              <TradeCard key={trade.id} trade={trade} onClose={() => setClosingTrade(trade)} onRoll={() => setRollingTrade(trade)} onDelete={() => handleDelete(trade.id)} deleting={deletingId === trade.id} />
             ))}
           </div>
         )}
       </div>
 
       {closingTrade && <CloseTradeModal trade={closingTrade} onClose={() => setClosingTrade(null)} onSuccess={() => { setClosingTrade(null); fetchData(); }} />}
+      {rollingTrade && <RollTradeModal trade={rollingTrade} onClose={() => setRollingTrade(null)} onSuccess={() => { setRollingTrade(null); fetchData(); }} />}
 
       {/* Reset Confirmation Modal */}
       {showResetConfirm && (
@@ -826,9 +1152,10 @@ const statusConfig: Record<string, { label: string; color: string; bg: string }>
   CLOSED_LOSS: { label: "Loss", color: "text-red-400", bg: "bg-red-900/30 border-red-700/30" },
   ASSIGNED: { label: "Assigned", color: "text-yellow-400", bg: "bg-yellow-900/30 border-yellow-700/30" },
   EXPIRED: { label: "Expired", color: "text-green-400", bg: "bg-green-900/30 border-green-700/30" },
+  ROLLED: { label: "Rolled", color: "text-purple-400", bg: "bg-purple-900/30 border-purple-700/30" },
 };
 
-function TradeCard({ trade, onClose, onDelete, deleting }: { trade: Trade; onClose: () => void; onDelete: () => void; deleting: boolean }) {
+function TradeCard({ trade, onClose, onRoll, onDelete, deleting }: { trade: Trade; onClose: () => void; onRoll: () => void; onDelete: () => void; deleting: boolean }) {
   const sc = statusConfig[trade.status] ?? statusConfig.OPEN;
   const premium = Number(trade.premium_received);
   const pnl = trade.pnl ? Number(trade.pnl) : null;
@@ -841,6 +1168,8 @@ function TradeCard({ trade, onClose, onDelete, deleting }: { trade: Trade; onClo
   const daysToExp = trade.status === "OPEN"
     ? Math.ceil((new Date(trade.expiration).getTime() - Date.now()) / 86400000)
     : null;
+
+  const isOpen = trade.status === "OPEN";
 
   return (
     <div className={`rounded-lg border p-3 ${sc.bg}`}>
@@ -859,23 +1188,33 @@ function TradeCard({ trade, onClose, onDelete, deleting }: { trade: Trade; onClo
               )}
             </div>
             <div className="text-xs text-gray-500 mt-0.5">
-              ${Number(trade.strike_price).toFixed(0)} put &middot; exp {trade.expiration} &middot; Premium ${premium.toFixed(2)} &middot; {daysOpen}d {trade.status === "OPEN" ? "open" : "held"}
-              {trade.profit_target_price && trade.status === "OPEN" && (
-                <span className="text-gray-600"> &middot; Target: ${Number(trade.profit_target_price).toFixed(2)} | Stop: ${Number(trade.stop_loss_price).toFixed(2)}</span>
-              )}
+              ${Number(trade.strike_price).toFixed(0)} put &middot; exp {trade.expiration} &middot; Premium ${premium.toFixed(2)} &middot; {daysOpen}d {isOpen ? "open" : "held"}
             </div>
+            {/* Tastytrade management targets for open trades */}
+            {isOpen && trade.profit_target_price && (
+              <div className="flex items-center gap-3 mt-1">
+                <span className="text-[10px] text-green-500">50% target: ${Number(trade.profit_target_price).toFixed(2)}</span>
+                <span className="text-[10px] text-red-500">Stop: ${Number(trade.stop_loss_price).toFixed(2)}</span>
+                {trade.management_date && (
+                  <span className="text-[10px] text-yellow-500">Manage by: {trade.management_date}</span>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {pnl !== null && (
-            <div className="text-right">
+            <div className="text-right mr-1">
               <div className={`font-bold ${pnl >= 0 ? "text-green-400" : "text-red-400"}`}>{pnl >= 0 ? "+" : ""}${pnl.toFixed(0)}</div>
               <div className="text-[10px] text-gray-500">{trade.pnl_percent ? `${Number(trade.pnl_percent).toFixed(2)}%` : ""}</div>
             </div>
           )}
-          {trade.status === "OPEN" && (
-            <button onClick={onClose} className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">Close</button>
+          {isOpen && (
+            <>
+              <button onClick={onClose} className="px-2.5 py-1.5 text-[10px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-medium">Close</button>
+              <button onClick={onRoll} className="px-2.5 py-1.5 text-[10px] bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors font-medium">Roll</button>
+            </>
           )}
           <button onClick={onDelete} disabled={deleting} className="px-2 py-1.5 text-xs bg-gray-700 hover:bg-red-900/50 text-gray-500 hover:text-red-400 rounded-lg transition-colors" title="Delete trade">{deleting ? "..." : "\u2715"}</button>
         </div>

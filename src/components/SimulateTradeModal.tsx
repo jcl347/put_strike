@@ -29,14 +29,15 @@ export default function SimulateTradeModal({ prefill, onClose, onSuccess }: Simu
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [quantity, setQuantity] = useState(1);
+  const [contractSize, setContractSize] = useState(100);
 
   const symbol = prefill?.symbol ?? "";
   const strikePrice = prefill?.strikePrice ?? 0;
   const expiration = prefill?.expiration ?? "";
   const premium = prefill?.premiumReceived ?? 0;
   const stockPrice = prefill?.stockPriceAtEntry ?? 0;
-  const collateral = strikePrice * 100 * quantity;
-  const yieldPct = collateral > 0 ? ((premium * 100 * quantity) / collateral * 100).toFixed(2) : "0";
+  const collateral = strikePrice * contractSize * quantity;
+  const yieldPct = collateral > 0 ? ((premium * contractSize * quantity) / collateral * 100).toFixed(2) : "0";
 
   // Management targets (research-backed defaults, not rigid rules)
   // - 50% profit: tastytrade validated; 25% also viable for faster capital turnover
@@ -67,6 +68,7 @@ export default function SimulateTradeModal({ prefill, onClose, onSuccess }: Simu
           vixAtEntry: prefill?.vixAtEntry,
           marketRegimeAtEntry: prefill?.marketRegimeAtEntry,
           quantity,
+          contractSize,
           notes: notes || null,
         }),
       });
@@ -131,20 +133,34 @@ export default function SimulateTradeModal({ prefill, onClose, onSuccess }: Simu
           )}
         </div>
 
-        {/* Quantity */}
-        <div className="mb-4">
-          <label className="block text-sm text-gray-400 mb-1">Contracts</label>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setQuantity(Math.max(1, quantity - 1))} className="w-8 h-8 bg-gray-800 border border-gray-700 rounded text-gray-300 hover:bg-gray-700">-</button>
-            <input
-              type="number"
-              min={1}
-              value={quantity}
-              onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-              className="w-16 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-center text-white text-sm focus:outline-none focus:border-blue-500"
-            />
-            <button onClick={() => setQuantity(quantity + 1)} className="w-8 h-8 bg-gray-800 border border-gray-700 rounded text-gray-300 hover:bg-gray-700">+</button>
-            <span className="text-xs text-gray-500 ml-2">x 100 shares each</span>
+        {/* Quantity & Contract Size */}
+        <div className="mb-4 space-y-2">
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Contracts</label>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setQuantity(Math.max(1, quantity - 1))} className="w-8 h-8 bg-gray-800 border border-gray-700 rounded text-gray-300 hover:bg-gray-700">-</button>
+              <input
+                type="number"
+                min={1}
+                value={quantity}
+                onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                className="w-16 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-center text-white text-sm focus:outline-none focus:border-blue-500"
+              />
+              <button onClick={() => setQuantity(quantity + 1)} className="w-8 h-8 bg-gray-800 border border-gray-700 rounded text-gray-300 hover:bg-gray-700">+</button>
+              <span className="text-xs text-gray-500 ml-2">x {contractSize} shares each</span>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Shares per Contract</label>
+            <select
+              value={contractSize}
+              onChange={(e) => setContractSize(Number(e.target.value))}
+              className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-white text-sm focus:outline-none focus:border-blue-500"
+            >
+              <option value={100}>100 (Standard US Equity)</option>
+              <option value={10}>10 (Mini)</option>
+              <option value={1}>1 (Micro / Custom)</option>
+            </select>
           </div>
         </div>
 
@@ -155,12 +171,12 @@ export default function SimulateTradeModal({ prefill, onClose, onSuccess }: Simu
             <span className="text-white font-medium">${collateral.toLocaleString()}</span>
           </div>
           <div className="flex justify-between text-sm">
-            <span className="text-gray-400">Max Gain</span>
-            <span className="text-green-400">${(premium * 100 * quantity).toFixed(0)} ({yieldPct}%)</span>
+            <span className="text-gray-400">Premium Gain</span>
+            <span className="text-green-400">${(premium * contractSize * quantity).toFixed(0)} ({yieldPct}%)</span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-gray-400">Max Loss</span>
-            <span className="text-red-400">${((strikePrice - premium) * 100 * quantity).toFixed(0)}</span>
+            <span className="text-red-400">${((strikePrice - premium) * contractSize * quantity).toFixed(0)}</span>
           </div>
         </div>
 
@@ -188,7 +204,7 @@ export default function SimulateTradeModal({ prefill, onClose, onSuccess }: Simu
 
         {/* Contract sizing note */}
         <div className="text-[10px] text-gray-600 mb-4 leading-snug">
-          Each contract represents 100 shares (OCC standard). Collateral = strike x 100 x contracts. Small accounts may consider vertical spreads (bull put spreads) for lower capital requirements.
+          Standard US equity options = 100 shares/contract (OCC). Collateral = strike x shares/contract x contracts. Small accounts may consider vertical spreads for lower capital requirements.
         </div>
 
         {/* Notes */}
