@@ -38,9 +38,12 @@ export default function SimulateTradeModal({ prefill, onClose, onSuccess }: Simu
   const collateral = strikePrice * 100 * quantity;
   const yieldPct = collateral > 0 ? ((premium * 100 * quantity) / collateral * 100).toFixed(2) : "0";
 
-  // Tastytrade management targets
-  const profitTarget = premium * 0.5;  // Close at 50% profit
-  const stopLoss = premium * 3;        // Stop at 2x credit (buy back at 3x)
+  // Management targets (research-backed defaults, not rigid rules)
+  // - 50% profit: tastytrade validated; 25% also viable for faster capital turnover
+  // - 2x credit stop (3x premium): tastytrade guideline, contested by SJ Options backtests;
+  //   21 DTE management is the primary risk-reduction mechanism
+  const profitTarget = premium * 0.5;
+  const stopLoss = premium * 3;
 
   const handleSubmit = async () => {
     setSaving(true);
@@ -161,12 +164,12 @@ export default function SimulateTradeModal({ prefill, onClose, onSuccess }: Simu
           </div>
         </div>
 
-        {/* Tastytrade Management Targets */}
+        {/* Management Guidelines */}
         <div className="bg-blue-900/15 border border-blue-800/30 rounded-lg p-3 mb-4">
-          <div className="text-[10px] text-blue-400 font-medium uppercase tracking-wide mb-1.5">Tastytrade Management Rules</div>
+          <div className="text-[10px] text-blue-400 font-medium uppercase tracking-wide mb-1.5">Management Guidelines (Research-Backed Defaults)</div>
           <div className="space-y-1 text-xs">
             <div className="flex justify-between">
-              <span className="text-gray-400">Close at 50% profit</span>
+              <span className="text-gray-400">Take profit at 50%</span>
               <span className="text-green-400">Buy back at ${profitTarget.toFixed(2)}</span>
             </div>
             <div className="flex justify-between">
@@ -175,9 +178,17 @@ export default function SimulateTradeModal({ prefill, onClose, onSuccess }: Simu
             </div>
             <div className="flex justify-between">
               <span className="text-gray-400">Manage at 21 DTE</span>
-              <span className="text-yellow-400">Roll or close</span>
+              <span className="text-yellow-400">Roll or close (reduces gamma risk)</span>
             </div>
           </div>
+          <div className="mt-2 text-[10px] text-gray-600 leading-snug">
+            Sources: tastytrade, DataDrivenOptions, Spintwig. Profit target and 21 DTE are strongly validated. Stop loss is a starting guideline — some studies show wider stops (3-4x) or no fixed stop with mechanical 21 DTE management can perform better.
+          </div>
+        </div>
+
+        {/* Contract sizing note */}
+        <div className="text-[10px] text-gray-600 mb-4 leading-snug">
+          Each contract represents 100 shares (OCC standard). Collateral = strike x 100 x contracts. Small accounts may consider vertical spreads (bull put spreads) for lower capital requirements.
         </div>
 
         {/* Notes */}

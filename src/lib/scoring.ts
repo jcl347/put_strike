@@ -18,12 +18,18 @@
  * 10. 52-Week Position — stocks near 52wk low have more downside risk
  *
  * References:
- * - tastytrade: 45 DTE, 16 delta, manage at 50% profit
- * - DataDrivenOptions: 20 delta short put optimal for theta
- * - Schwab/Barchart: IV Rank > 30 + IV Percentile > 50 for premium selling
- * - Spintwig SPY backtests: risk-adjusted returns matter more than absolute
- * - CBOE: lower-beta underlyings have higher put-selling win rates
+ * - tastytrade/tastylive: 45 DTE, 16 delta (1 SD), manage at 50% profit, 21 DTE management
+ * - DataDrivenOptions: 20 delta short / 13 delta long optimal for theta capture (35-45 DTE)
+ * - Schwab/Barchart: IV Rank > 30 + IV Percentile > 50 (56.8% win rate vs 48.2% unfiltered)
+ * - Spintwig SPY backtests: 16 delta with leverage has better Sharpe than 30 delta
+ * - CBOE PUT index: lower-beta underlyings have higher put-selling win rates; VIX 15-25 optimal
  * - tastytrade: large-cap stocks reduce assignment gap risk
+ *
+ * Management consensus (validated across multiple sources):
+ * - Profit target: 25-50% of max profit (both validated; 50% = higher P/L, 25% = faster turnover)
+ * - 21 DTE: Roll or close (most universally validated — reduces gamma risk)
+ * - Stop loss 2x credit: tastytrade guideline, contested by SJ Options backtests; not ironclad
+ * - Key takeaway: managing trades at all >> holding to expiration (all sources agree)
  */
 
 export interface PutCandidate {
@@ -297,7 +303,7 @@ export function scorePut(
     weight: 0.08,
   });
 
-  // 3. Delta Quality (0.14-0.22 is sweet spot per tastytrade 16Δ / DDO 20Δ research)
+  // 3. Delta Quality (0.14-0.22 sweet spot: tastytrade 16Δ + DataDrivenOptions 20Δ + Spintwig Sharpe data)
   const absDelta = Math.abs(candidate.delta);
   let deltaScore: number;
   if (absDelta >= 0.14 && absDelta <= 0.22) deltaScore = 100;
@@ -313,7 +319,7 @@ export function scorePut(
     weight: 0.13,
   });
 
-  // 4. DTE Quality (30-45 optimal per tastytrade, but 25-50 is good)
+  // 4. DTE Quality (30-45 optimal per tastytrade + DataDrivenOptions 35-45, 25-50 acceptable)
   let dteScore: number;
   if (candidate.dte >= 30 && candidate.dte <= 45) dteScore = 100;
   else if (candidate.dte >= 25 && candidate.dte <= 55) dteScore = 80;
@@ -346,7 +352,7 @@ export function scorePut(
     weight: 0.10,
   });
 
-  // 6. Distance OTM — 5-12% sweet spot (typical for 16-20Δ at 45 DTE per tastytrade/DDO)
+  // 6. Distance OTM — 5-12% sweet spot (typical for 14-22Δ at 30-45 DTE per tastytrade/DDO)
   const distanceOTM =
     ((candidate.stockPrice - candidate.strikePrice) / candidate.stockPrice) * 100;
 

@@ -401,7 +401,7 @@ function ManagementAlerts({ trades }: { trades: Trade[] }) {
 
   return (
     <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-      <h3 className="text-sm font-medium text-gray-400 mb-2">Management Alerts (tastytrade)</h3>
+      <h3 className="text-sm font-medium text-gray-400 mb-2">Management Alerts</h3>
       <div className="space-y-1.5">
         {alerts.map((a, i) => (
           <div key={i} className={`px-3 py-2 rounded-lg border text-xs flex items-center gap-2 ${urgencyColors[a.urgency]}`}>

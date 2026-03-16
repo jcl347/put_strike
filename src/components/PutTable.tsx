@@ -294,24 +294,24 @@ export default function PutTable({ puts, title, onTradeSimulated }: PutTableProp
                             </div>
                           </div>
 
-                          {/* Management Rules */}
+                          {/* Management Guidelines */}
                           <div className="mt-3 pt-3 border-t border-gray-700/50">
                             <h4 className="text-xs font-medium text-gray-500 uppercase mb-1">
-                              Management Rules (tastytrade methodology)
+                              Management Guidelines (Research-Backed Defaults)
                             </h4>
                             <div className="flex items-center flex-wrap gap-2 text-xs">
-                              <span className="px-2 py-1 bg-gray-700/50 rounded text-gray-300">
-                                Close at 50% profit ($
+                              <span className="px-2 py-1 bg-gray-700/50 rounded text-gray-300" title="Strongly validated by tastytrade research. 25% also viable for faster capital turnover.">
+                                Take profit ~50% ($
                                 {(((put.bid + put.ask) / 2) * 50).toFixed(0)}{" "}
                                 gain)
                               </span>
-                              <span className="px-2 py-1 bg-gray-700/50 rounded text-gray-300">
-                                Stop at 2x credit ($
+                              <span className="px-2 py-1 bg-gray-700/50 rounded text-gray-300" title="Tastytrade guideline, contested by independent backtests. Consider wider stops or mechanical 21 DTE management.">
+                                Stop ~2x credit ($
                                 {(((put.bid + put.ask) / 2) * 100).toFixed(0)}{" "}
                                 loss)
                               </span>
-                              <span className="px-2 py-1 bg-gray-700/50 rounded text-gray-300">
-                                Roll at 21 DTE if profitable
+                              <span className="px-2 py-1 bg-blue-900/30 rounded text-blue-300" title="Most validated rule — reduces gamma risk near expiration.">
+                                Manage at 21 DTE
                               </span>
                               <button
                                 onClick={(e) => { e.stopPropagation(); setSimulatingPut(put); }}

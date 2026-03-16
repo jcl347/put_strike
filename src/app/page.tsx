@@ -823,18 +823,18 @@ export default function Home() {
             />
           </div>
 
-          {/* Strategy Guide - Schwab-Optimized */}
+          {/* Strategy Guide - Research-Backed */}
           <div className="bg-gray-800/30 border border-gray-700/50 rounded-lg p-4">
             <h3 className="text-sm font-medium text-gray-400 mb-3">
-              Schwab Cash-Secured Put Strategy Reference
+              Cash-Secured Put Strategy Reference
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
               <div>
                 <h4 className="text-white font-medium mb-1">Entry Criteria</h4>
                 <ul className="text-gray-400 space-y-1 list-disc list-inside">
-                  <li>Delta: -0.15 to -0.30 (sweet spot)</li>
-                  <li>DTE: 30-45 days optimal</li>
-                  <li>IV Rank &gt; 50% (sell rich premium)</li>
+                  <li>Delta: -0.14 to -0.22 (tastytrade/DDO sweet spot)</li>
+                  <li>DTE: 30-45 days (tastytrade/DDO optimal)</li>
+                  <li>IV Rank &gt; 50% (Schwab 56.8% win rate data)</li>
                   <li>Strike at/below support level</li>
                   <li>Stability score &gt; 60</li>
                   <li>No earnings within DTE window</li>
@@ -842,28 +842,33 @@ export default function Home() {
                 </ul>
               </div>
               <div>
-                <h4 className="text-white font-medium mb-1">Management</h4>
+                <h4 className="text-white font-medium mb-1">Management Guidelines</h4>
                 <ul className="text-gray-400 space-y-1 list-disc list-inside">
-                  <li>Close at 50% of max profit</li>
-                  <li>Stop loss at 2x premium received</li>
-                  <li>Roll at 21 DTE if still profitable</li>
+                  <li>Take profit at 25-50% of max profit</li>
+                  <li className="text-blue-400/80">Manage/roll at 21 DTE (strongest rule)</li>
+                  <li>Stop loss ~2x credit (guideline, not rigid)</li>
                   <li>Roll down and out for net credit only</li>
                   <li>Never hold through earnings</li>
-                  <li>Know when to take assignment</li>
+                  <li>Managing at all &gt; holding to expiration</li>
                 </ul>
               </div>
               <div>
-                <h4 className="text-white font-medium mb-1">Schwab Risk Rules</h4>
+                <h4 className="text-white font-medium mb-1">Risk & Sizing</h4>
                 <ul className="text-gray-400 space-y-1 list-disc list-inside">
-                  <li>Cash-secured: full collateral reserved</li>
+                  <li>Cash-secured: full collateral (strike x 100)</li>
                   <li>Max 5-10% of capital per position</li>
-                  <li>Only sell on stocks you&apos;d own</li>
-                  <li>Watch ex-dividend for early assignment</li>
+                  <li>Only sell on stocks you&apos;d own if assigned</li>
                   <li>Reduce size when VIX &gt; 30</li>
-                  <li>Prefer beta &lt; 1.3 underlyings</li>
+                  <li>Prefer beta &lt; 1.3 underlyings (CBOE data)</li>
+                  <li>Small accounts: consider vertical spreads</li>
                 </ul>
               </div>
             </div>
+            <p className="text-[10px] text-gray-600 mt-3">
+              Sources: tastytrade/tastylive studies, DataDrivenOptions, Schwab, Spintwig backtests, CBOE PUT index, Early Retirement Now.
+              The 21 DTE rule and profit-taking (25-50%) are the most validated across all sources. The 2x stop loss is a starting point, not universally agreed upon.
+              Each standard contract = 100 shares (OCC). There are no widely available mini equity options.
+            </p>
           </div>
         </div>
       )}
