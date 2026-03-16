@@ -77,6 +77,27 @@ interface Trade {
   contract_size: number | null;
 }
 
+interface LivePrice {
+  stockPrice: number;
+  putBid: number | null;
+  putAsk: number | null;
+  putLast: number | null;
+  putMid: number | null;
+  unrealizedPnl: number;
+  unrealizedPnlPct: number;
+  profitPct: number;
+}
+
+interface LiveAlert {
+  tradeId: number;
+  symbol: string;
+  type: "PROFIT_TARGET" | "STOP_LOSS" | "DTE_21" | "DTE_7" | "EXPIRING" | "ITM";
+  urgency: "high" | "medium" | "low";
+  message: string;
+  currentPutPrice: number | null;
+  stockPrice: number;
+}
+
 interface TradesDashboardProps {
   refreshKey: number;
 }
@@ -364,20 +385,57 @@ interface AlertItem {
   suggestedAction?: ManagementAction;
 }
 
-function ManagementAlerts({ trades, onAction }: { trades: Trade[]; onAction: (trade: Trade, action: ManagementAction) => void }) {
+function ManagementAlerts({ trades, liveAlerts, onAction }: { trades: Trade[]; liveAlerts: LiveAlert[]; onAction: (trade: Trade, action: ManagementAction) => void }) {
   const openTrades = trades.filter((t) => t.status === "OPEN");
   if (openTrades.length === 0) return null;
 
-  const today = new Date();
-  const alerts: AlertItem[] = [];
+  const tradeMap = new Map(openTrades.map((t) => [t.id, t]));
 
+  // Build combined alerts: live (price-based, auto-detected) + time-based
+  const alerts: AlertItem[] = [];
+  const seenTradeTypes = new Set<string>(); // prevent duplicate alert types per trade
+
+  // Live price-based alerts (from /api/trades/prices)
+  for (const la of liveAlerts) {
+    const trade = tradeMap.get(la.tradeId);
+    if (!trade) continue;
+
+    const key = `${la.tradeId}-${la.type}`;
+    if (seenTradeTypes.has(key)) continue;
+    seenTradeTypes.add(key);
+
+    const actionMap: Record<string, ManagementAction> = {
+      PROFIT_TARGET: "close_profit",
+      STOP_LOSS: "close_stop",
+      DTE_21: "roll",
+      DTE_7: "close_custom",
+      EXPIRING: "expire",
+      ITM: "close_custom",
+    };
+
+    alerts.push({
+      trade,
+      type: la.type === "PROFIT_TARGET" ? "50% HIT" :
+            la.type === "STOP_LOSS" ? "STOP HIT" :
+            la.type === "DTE_21" ? "21 DTE" :
+            la.type === "DTE_7" ? "7 DTE" :
+            la.type === "ITM" ? "ITM" :
+            la.type,
+      urgency: la.urgency,
+      message: la.message,
+      suggestedAction: actionMap[la.type],
+    });
+  }
+
+  // Fallback: time-based alerts for trades without live data
+  const today = new Date();
   for (const trade of openTrades) {
     const expDate = new Date(trade.expiration);
     const daysToExp = Math.ceil((expDate.getTime() - today.getTime()) / 86400000);
     const mgmtDate = trade.management_date ? new Date(trade.management_date) : null;
 
-    // 21 DTE management alert — most validated tastytrade rule
-    if (daysToExp <= 21) {
+    // Only add time-based alerts if no live alert of same type exists
+    if (daysToExp <= 21 && !seenTradeTypes.has(`${trade.id}-DTE_21`) && !seenTradeTypes.has(`${trade.id}-DTE_7`)) {
       alerts.push({
         trade,
         type: "21 DTE",
@@ -385,35 +443,13 @@ function ManagementAlerts({ trades, onAction }: { trades: Trade[]; onAction: (tr
         message: `${daysToExp}d to expiration — roll or close to reduce gamma risk`,
         suggestedAction: daysToExp <= 7 ? "close_custom" : "roll",
       });
-    } else if (mgmtDate && today >= mgmtDate) {
+    } else if (mgmtDate && today >= mgmtDate && !seenTradeTypes.has(`${trade.id}-DTE_21`)) {
       alerts.push({
         trade,
         type: "MGMT DATE",
         urgency: "medium",
         message: "Management date reached — review position",
         suggestedAction: "roll",
-      });
-    }
-
-    // 50% profit target reached check (informational — user provides actual market price)
-    if (trade.profit_target_price) {
-      alerts.push({
-        trade,
-        type: "TARGET",
-        urgency: "low",
-        message: `50% profit target: buy back at $${Number(trade.profit_target_price).toFixed(2)}`,
-        suggestedAction: "close_profit",
-      });
-    }
-
-    // Expiration imminent
-    if (daysToExp <= 3 && daysToExp > 0) {
-      alerts.push({
-        trade,
-        type: "EXPIRING",
-        urgency: "high",
-        message: `Expires in ${daysToExp} day${daysToExp > 1 ? "s" : ""} — close or let expire`,
-        suggestedAction: "expire",
       });
     }
   }
@@ -436,11 +472,21 @@ function ManagementAlerts({ trades, onAction }: { trades: Trade[]; onAction: (tr
     expire: { label: "Let Expire", color: "bg-gray-700 hover:bg-gray-600 text-white" },
   };
 
+  // Highlight if any alert was auto-detected from live prices
+  const hasLiveAlerts = liveAlerts.length > 0;
+
   return (
-    <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+    <div className={`border rounded-lg p-4 ${hasLiveAlerts ? "bg-gray-800/70 border-orange-700/50" : "bg-gray-800/50 border-gray-700"}`}>
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm font-medium text-gray-400">Tastytrade Management Alerts</h3>
-        <span className="text-[10px] text-gray-600">Research-backed actions per tastytrade methodology</span>
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-medium text-gray-400">Tastytrade Management Alerts</h3>
+          {hasLiveAlerts && (
+            <span className="px-1.5 py-0.5 rounded bg-orange-900/40 text-orange-400 text-[10px] font-medium animate-pulse">
+              LIVE
+            </span>
+          )}
+        </div>
+        <span className="text-[10px] text-gray-600">Auto-detected from market prices</span>
       </div>
       <div className="space-y-1.5">
         {alerts.map((a, i) => (
@@ -448,15 +494,10 @@ function ManagementAlerts({ trades, onAction }: { trades: Trade[]; onAction: (tr
             <span className={`font-bold ${urgencyText[a.urgency]}`}>{a.trade.symbol}</span>
             <span className={`px-1.5 py-0.5 rounded bg-gray-800/50 text-[10px] font-medium ${urgencyText[a.urgency]}`}>{a.type}</span>
             <span className="text-gray-300 flex-1">{a.message}</span>
-            {a.trade.profit_target_price && a.type !== "TARGET" && (
-              <span className="text-gray-600 text-[10px]">
-                T:${Number(a.trade.profit_target_price).toFixed(2)} S:${Number(a.trade.stop_loss_price).toFixed(2)}
-              </span>
-            )}
             {a.suggestedAction && (
               <button
                 onClick={() => onAction(a.trade, a.suggestedAction!)}
-                className={`px-2 py-1 rounded text-[10px] font-medium ${actionLabels[a.suggestedAction].color}`}
+                className={`px-2 py-1 rounded text-[10px] font-medium shrink-0 ${actionLabels[a.suggestedAction].color}`}
               >
                 {actionLabels[a.suggestedAction].label}
               </button>
@@ -866,6 +907,11 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
   const [filter, setFilter] = useState<"all" | "OPEN" | "closed">("all");
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [livePrices, setLivePrices] = useState<Record<number, LivePrice>>({});
+  const [liveAlerts, setLiveAlerts] = useState<LiveAlert[]>([]);
+  const [pricesLoading, setPricesLoading] = useState(false);
+  const [pricesLastUpdated, setPricesLastUpdated] = useState<Date | null>(null);
+  const [showGuide, setShowGuide] = useState(false);
 
   // Handle tastytrade management actions from alerts
   const handleManagementAction = (trade: Trade, action: ManagementAction) => {
@@ -881,6 +927,24 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
         break;
     }
   };
+
+  // Fetch live prices for open trades
+  const fetchLivePrices = useCallback(async () => {
+    setPricesLoading(true);
+    try {
+      const res = await fetch("/api/trades/prices");
+      if (res.ok) {
+        const data = await res.json();
+        setLivePrices(data.prices ?? {});
+        setLiveAlerts(data.alerts ?? []);
+        setPricesLastUpdated(new Date());
+      }
+    } catch {
+      // Silently fail — live prices are optional
+    } finally {
+      setPricesLoading(false);
+    }
+  }, []);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -914,6 +978,13 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData, refreshKey]);
+
+  // Fetch live prices after trades are loaded (only if open trades exist)
+  useEffect(() => {
+    if (trades.some((t) => t.status === "OPEN")) {
+      fetchLivePrices();
+    }
+  }, [trades, fetchLivePrices]);
 
   const handleDelete = async (id: number) => {
     setDeletingId(id);
@@ -978,8 +1049,71 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
       {/* Capital Management */}
       <CapitalSection capital={capital} onRefresh={fetchData} />
 
-      {/* Tastytrade Management Alerts */}
-      <ManagementAlerts trades={trades} onAction={handleManagementAction} />
+      {/* Live Prices Status Bar */}
+      {trades.some((t) => t.status === "OPEN") && (
+        <div className="flex items-center justify-between bg-gray-800/50 border border-gray-700 rounded-lg px-4 py-2">
+          <div className="flex items-center gap-3">
+            <div className={`w-2 h-2 rounded-full ${pricesLoading ? "bg-yellow-400 animate-pulse" : pricesLastUpdated ? "bg-green-400" : "bg-gray-600"}`} />
+            <span className="text-xs text-gray-400">
+              {pricesLoading ? "Fetching live prices..." : pricesLastUpdated ? `Live prices updated ${pricesLastUpdated.toLocaleTimeString()}` : "Live prices not loaded"}
+            </span>
+            {liveAlerts.length > 0 && (
+              <span className="px-2 py-0.5 bg-amber-900/40 text-amber-400 text-[10px] font-bold rounded-full">
+                {liveAlerts.length} ALERT{liveAlerts.length > 1 ? "S" : ""}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowGuide(!showGuide)} className="px-2 py-1 text-[10px] font-medium bg-gray-700 text-gray-300 hover:text-white rounded transition-colors">
+              {showGuide ? "Hide" : "Show"} Guide
+            </button>
+            <button onClick={fetchLivePrices} disabled={pricesLoading} className="px-3 py-1 text-xs font-medium bg-blue-600/20 text-blue-400 hover:bg-blue-600/40 rounded transition-colors disabled:opacity-50">
+              {pricesLoading ? "Refreshing..." : "Refresh Prices"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Tastytrade Management Guide */}
+      {showGuide && (
+        <div className="bg-gray-800/50 border border-indigo-800/50 rounded-lg p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-indigo-300">Tastytrade Management Guide</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+            <div className="bg-gray-900/50 rounded-lg p-3 border border-green-900/30">
+              <div className="font-semibold text-green-400 mb-1">50% Profit Target</div>
+              <p className="text-gray-400 leading-relaxed">When the put price drops to 50% of your received premium, buy it back to lock in profits. This is the most validated management rule — tastytrade research shows managing winners consistently outperforms holding to expiration.</p>
+              <p className="text-gray-500 mt-1 italic">Example: Sold put at $2.00 → buy back at $1.00</p>
+            </div>
+            <div className="bg-gray-900/50 rounded-lg p-3 border border-red-900/30">
+              <div className="font-semibold text-red-400 mb-1">2x Credit Stop Loss</div>
+              <p className="text-gray-400 leading-relaxed">If the put price rises to 3x your premium (2x loss), consider closing to limit damage. This is a starting guideline — some traders prefer wider stops or rely on the 21 DTE rule instead. Evaluate based on your thesis for the stock.</p>
+              <p className="text-gray-500 mt-1 italic">Example: Sold at $2.00 → stop at $6.00 (loss = $4.00)</p>
+            </div>
+            <div className="bg-gray-900/50 rounded-lg p-3 border border-blue-900/30">
+              <div className="font-semibold text-blue-400 mb-1">21 DTE Management</div>
+              <p className="text-gray-400 leading-relaxed">The most universally validated rule. At 21 days to expiration, gamma risk accelerates — small stock moves cause large option price swings. Roll to a new expiration or close the position.</p>
+              <p className="text-gray-500 mt-1 italic">Roll for a net credit when possible (new premium &gt; buyback cost)</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+            <div className="bg-gray-900/50 rounded-lg p-3 border border-purple-900/30">
+              <div className="font-semibold text-purple-400 mb-1">Rolling (Out / Down)</div>
+              <p className="text-gray-400 leading-relaxed"><strong>Roll Out:</strong> Same strike, later expiration — collect more time premium. <strong>Roll Down:</strong> Lower strike, same/later date — reduce risk. <strong>Roll Down &amp; Out:</strong> Both — most defensive. Always aim for a net credit.</p>
+            </div>
+            <div className="bg-gray-900/50 rounded-lg p-3 border border-orange-900/30">
+              <div className="font-semibold text-orange-400 mb-1">ITM Warning</div>
+              <p className="text-gray-400 leading-relaxed">When the stock drops below your strike price, the put is in-the-money and assignment risk increases. Consider rolling down or closing. If you are comfortable owning the stock at that price, assignment can be acceptable.</p>
+            </div>
+            <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-600/30">
+              <div className="font-semibold text-gray-300 mb-1">Alert Priority</div>
+              <p className="text-gray-400 leading-relaxed"><span className="text-red-400 font-bold">Red/High:</span> Immediate action needed (stop loss, ITM, expiring). <span className="text-amber-400 font-bold">Amber/Medium:</span> Evaluate soon (profit target, 21 DTE). Alerts are auto-detected from live option prices when available.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tastytrade Management Alerts (live price-based + time-based) */}
+      <ManagementAlerts trades={trades} liveAlerts={liveAlerts} onAction={handleManagementAction} />
 
       {/* KPI Cards */}
       {s && (
@@ -1085,7 +1219,7 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
         ) : (
           <div className="space-y-2">
             {filteredTrades.map((trade) => (
-              <TradeCard key={trade.id} trade={trade} onClose={() => setClosingTrade(trade)} onRoll={() => setRollingTrade(trade)} onDelete={() => handleDelete(trade.id)} deleting={deletingId === trade.id} />
+              <TradeCard key={trade.id} trade={trade} onClose={() => setClosingTrade(trade)} onRoll={() => setRollingTrade(trade)} onDelete={() => handleDelete(trade.id)} deleting={deletingId === trade.id} livePrice={livePrices[trade.id]} />
             ))}
           </div>
         )}
@@ -1155,7 +1289,7 @@ const statusConfig: Record<string, { label: string; color: string; bg: string }>
   ROLLED: { label: "Rolled", color: "text-purple-400", bg: "bg-purple-900/30 border-purple-700/30" },
 };
 
-function TradeCard({ trade, onClose, onRoll, onDelete, deleting }: { trade: Trade; onClose: () => void; onRoll: () => void; onDelete: () => void; deleting: boolean }) {
+function TradeCard({ trade, onClose, onRoll, onDelete, deleting, livePrice }: { trade: Trade; onClose: () => void; onRoll: () => void; onDelete: () => void; deleting: boolean; livePrice?: LivePrice }) {
   const sc = statusConfig[trade.status] ?? statusConfig.OPEN;
   const premium = Number(trade.premium_received);
   const pnl = trade.pnl ? Number(trade.pnl) : null;
@@ -1170,40 +1304,106 @@ function TradeCard({ trade, onClose, onRoll, onDelete, deleting }: { trade: Trad
     : null;
 
   const isOpen = trade.status === "OPEN";
+  const strike = Number(trade.strike_price);
+
+  // Determine profit progress bar for open trades with live data
+  const profitPct = livePrice?.profitPct ?? null;
+  const profitTarget = trade.profit_target_price ? Number(trade.profit_target_price) : null;
+  const stopLoss = trade.stop_loss_price ? Number(trade.stop_loss_price) : null;
+  const currentPut = livePrice?.putMid ?? livePrice?.putLast ?? null;
+
+  // Detect if target/stop hit
+  const targetHit = currentPut != null && profitTarget != null && currentPut <= profitTarget;
+  const stopHit = currentPut != null && stopLoss != null && currentPut >= stopLoss;
+  const isItm = livePrice != null && livePrice.stockPrice < strike;
 
   return (
-    <div className={`rounded-lg border p-3 ${sc.bg}`}>
+    <div className={`rounded-lg border p-3 ${targetHit ? "bg-green-900/30 border-green-700/40" : stopHit ? "bg-red-900/30 border-red-700/40" : sc.bg}`}>
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-white font-bold">{trade.symbol}</span>
-              <span className={`px-2 py-0.5 rounded text-[10px] font-medium border ${sc.bg} ${sc.color}`}>{sc.label}</span>
-              {qty > 1 && <span className="text-xs text-gray-500">x{qty}</span>}
-              {trade.score_at_entry && <span className="text-xs text-gray-500">Score: {Number(trade.score_at_entry).toFixed(0)}</span>}
-              {daysToExp !== null && daysToExp <= 21 && (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${daysToExp <= 7 ? "bg-red-900/40 text-red-400" : "bg-yellow-900/40 text-yellow-400"}`}>
-                  {daysToExp}d to exp
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-white font-bold">{trade.symbol}</span>
+            <span className={`px-2 py-0.5 rounded text-[10px] font-medium border ${sc.bg} ${sc.color}`}>{sc.label}</span>
+            {qty > 1 && <span className="text-xs text-gray-500">x{qty}</span>}
+            {trade.score_at_entry && <span className="text-xs text-gray-500">Score: {Number(trade.score_at_entry).toFixed(0)}</span>}
+            {daysToExp !== null && daysToExp <= 21 && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${daysToExp <= 7 ? "bg-red-900/40 text-red-400" : "bg-yellow-900/40 text-yellow-400"}`}>
+                {daysToExp}d to exp
+              </span>
+            )}
+            {targetHit && <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-green-900/60 text-green-300 animate-pulse">50% TARGET HIT</span>}
+            {stopHit && <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-red-900/60 text-red-300 animate-pulse">STOP HIT</span>}
+            {isItm && !stopHit && <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-orange-900/40 text-orange-400">ITM</span>}
+          </div>
+          <div className="text-xs text-gray-500 mt-0.5">
+            ${strike.toFixed(0)} put &middot; exp {trade.expiration} &middot; Sold at ${premium.toFixed(2)} &middot; {daysOpen}d {isOpen ? "open" : "held"}
+          </div>
+
+          {/* Live prices for open trades */}
+          {isOpen && livePrice && (
+            <div className="flex items-center gap-4 mt-1.5">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-gray-600">Stock:</span>
+                <span className={`text-xs font-medium ${isItm ? "text-orange-400" : "text-white"}`}>${livePrice.stockPrice.toFixed(2)}</span>
+              </div>
+              {currentPut != null && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-gray-600">Put:</span>
+                  <span className={`text-xs font-medium ${targetHit ? "text-green-400" : stopHit ? "text-red-400" : "text-white"}`}>${currentPut.toFixed(2)}</span>
+                  {livePrice.putBid != null && livePrice.putAsk != null && (
+                    <span className="text-[10px] text-gray-600">(${livePrice.putBid.toFixed(2)}-${livePrice.putAsk.toFixed(2)})</span>
+                  )}
+                </div>
+              )}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-gray-600">P&L:</span>
+                <span className={`text-xs font-bold ${livePrice.unrealizedPnl >= 0 ? "text-green-400" : "text-red-400"}`}>
+                  {livePrice.unrealizedPnl >= 0 ? "+" : ""}${livePrice.unrealizedPnl.toFixed(0)}
                 </span>
+              </div>
+            </div>
+          )}
+
+          {/* Profit progress bar for open trades */}
+          {isOpen && profitPct !== null && (
+            <div className="mt-1.5">
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden relative">
+                  {/* Stop loss zone (right side, red) */}
+                  <div className="absolute right-0 top-0 h-full bg-red-900/40 rounded-r-full" style={{ width: "33%" }} />
+                  {/* Profit target marker at 50% */}
+                  <div className="absolute top-0 h-full w-px bg-green-500/60" style={{ left: "50%" }} />
+                  {/* Current position */}
+                  <div
+                    className={`h-full rounded-full transition-all ${profitPct >= 50 ? "bg-green-500" : profitPct >= 0 ? "bg-blue-500" : "bg-red-500"}`}
+                    style={{ width: `${Math.min(100, Math.max(0, profitPct))}%` }}
+                  />
+                </div>
+                <span className={`text-[10px] font-medium w-10 text-right ${profitPct >= 50 ? "text-green-400" : profitPct >= 0 ? "text-blue-400" : "text-red-400"}`}>
+                  {profitPct.toFixed(0)}%
+                </span>
+              </div>
+              <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
+                <span>Entry</span>
+                {profitTarget != null && <span className="text-green-600">50% @ ${profitTarget.toFixed(2)}</span>}
+                {stopLoss != null && <span className="text-red-600">Stop @ ${stopLoss.toFixed(2)}</span>}
+              </div>
+            </div>
+          )}
+
+          {/* Targets for open trades without live data */}
+          {isOpen && profitPct === null && trade.profit_target_price && (
+            <div className="flex items-center gap-3 mt-1">
+              <span className="text-[10px] text-green-500">50% target: ${Number(trade.profit_target_price).toFixed(2)}</span>
+              <span className="text-[10px] text-red-500">Stop: ${Number(trade.stop_loss_price).toFixed(2)}</span>
+              {trade.management_date && (
+                <span className="text-[10px] text-yellow-500">Manage by: {trade.management_date}</span>
               )}
             </div>
-            <div className="text-xs text-gray-500 mt-0.5">
-              ${Number(trade.strike_price).toFixed(0)} put &middot; exp {trade.expiration} &middot; Premium ${premium.toFixed(2)} &middot; {daysOpen}d {isOpen ? "open" : "held"}
-            </div>
-            {/* Tastytrade management targets for open trades */}
-            {isOpen && trade.profit_target_price && (
-              <div className="flex items-center gap-3 mt-1">
-                <span className="text-[10px] text-green-500">50% target: ${Number(trade.profit_target_price).toFixed(2)}</span>
-                <span className="text-[10px] text-red-500">Stop: ${Number(trade.stop_loss_price).toFixed(2)}</span>
-                {trade.management_date && (
-                  <span className="text-[10px] text-yellow-500">Manage by: {trade.management_date}</span>
-                )}
-              </div>
-            )}
-          </div>
+          )}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 ml-3 shrink-0">
           {pnl !== null && (
             <div className="text-right mr-1">
               <div className={`font-bold ${pnl >= 0 ? "text-green-400" : "text-red-400"}`}>{pnl >= 0 ? "+" : ""}${pnl.toFixed(0)}</div>
