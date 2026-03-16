@@ -15,6 +15,7 @@ import DTESelector, { DEFAULT_DTE, type DTERange } from "@/components/DTESelecto
 import StockForecast from "@/components/StockForecast";
 import TimeSeriesChart from "@/components/TimeSeriesChart";
 import ConcordanceCard from "@/components/ConcordanceCard";
+import { SimulatedTradesProvider, TradeLog } from "@/components/SimulatedTrades";
 
 interface AnalysisData {
   symbol: string;
@@ -121,6 +122,14 @@ type PredictionData = any;
 const MIN_ITRANSFORMER_CONFIDENCE = 0.6;
 
 export default function Home() {
+  return (
+    <SimulatedTradesProvider>
+      <HomeInner />
+    </SimulatedTradesProvider>
+  );
+}
+
+function HomeInner() {
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
   const [screenerData, setScreenerData] = useState<ScreenerData | null>(null);
   const [prediction, setPrediction] = useState<PredictionData | null>(null);
@@ -964,6 +973,11 @@ export default function Home() {
           </button>
         </div>
       )}
+
+      {/* Simulated Trade Log */}
+      <div className="mt-6">
+        <TradeLog />
+      </div>
 
       {/* Footer */}
       <footer className="mt-12 pt-6 border-t border-gray-800 text-center text-xs text-gray-600">

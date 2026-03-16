@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { getChecklistSummary, type ChecklistInput, type StockContext } from "@/lib/checklist";
+import { useSimulatedTrades, SimulateTradeButton } from "./SimulatedTrades";
 
 interface Top10Put {
   symbol: string;
@@ -156,6 +157,7 @@ function CrossComparisonGuide() {
 export default function Top10Puts({ puts }: Top10PutsProps) {
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [showGuide, setShowGuide] = useState(false);
+  const { addTrade } = useSimulatedTrades();
 
   // Already deduplicated upstream (1 best per stock, sorted by score)
   const displayPuts = puts.slice(0, 10);
@@ -464,6 +466,25 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
                     <span className="px-2 py-1 bg-gray-700/50 rounded text-gray-300">
                       Roll at 21 DTE if profitable
                     </span>
+                  </div>
+
+                  {/* Simulate Trade */}
+                  <div className="mt-3 pt-3 border-t border-gray-700/50">
+                    <SimulateTradeButton
+                      symbol={put.symbol}
+                      stockPrice={put.stockPrice}
+                      strikePrice={put.strikePrice}
+                      expiration={put.expiration}
+                      dte={put.dte}
+                      bid={put.bid}
+                      ask={put.ask}
+                      delta={put.delta}
+                      impliedVolatility={0}
+                      score={put.score}
+                      premiumYield={put.premiumYield}
+                      annualizedReturn={put.annualizedReturn}
+                      recommendation={put.recommendation}
+                    />
                   </div>
                 </div>
               )}

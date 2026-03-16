@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { SimulateTradeButton } from "./SimulatedTrades";
 
 interface ScoredPut {
   symbol: string;
@@ -311,6 +312,25 @@ export default function PutTable({ puts, title }: PutTableProps) {
                                 Roll at 21 DTE if profitable
                               </span>
                             </div>
+                          </div>
+
+                          {/* Simulate Trade */}
+                          <div className="mt-3 pt-3 border-t border-gray-700/50">
+                            <SimulateTradeButton
+                              symbol={put.symbol}
+                              stockPrice={put.stockPrice}
+                              strikePrice={put.strikePrice}
+                              expiration={put.expiration}
+                              dte={put.dte}
+                              bid={put.bid}
+                              ask={put.ask}
+                              delta={put.delta}
+                              impliedVolatility={put.impliedVolatility}
+                              score={put.score}
+                              premiumYield={put.premiumYield}
+                              annualizedReturn={put.annualizedReturn}
+                              recommendation={put.recommendation}
+                            />
                           </div>
                         </div>
                       )}
