@@ -12,6 +12,7 @@ import PutDecisionAssistant from "@/components/PutDecisionAssistant";
 import PricePrediction from "@/components/PricePrediction";
 import HFModelStatus from "@/components/HFModelStatus";
 import DTESelector, { DEFAULT_DTE, type DTERange } from "@/components/DTESelector";
+import { DeltaSelector, AnnReturnSelector, DEFAULT_DELTA, DEFAULT_ANN_RETURN, type DeltaRange, type AnnReturnRange } from "@/components/PutFilters";
 import StockForecast from "@/components/StockForecast";
 import TimeSeriesChart from "@/components/TimeSeriesChart";
 import ConcordanceCard from "@/components/ConcordanceCard";
@@ -133,6 +134,8 @@ export default function Home() {
   const [dataSourceStatus, setDataSourceStatus] = useState<"connected" | "degraded" | "down" | null>(null);
   const abortRef = useRef(false);
   const [dteRange, setDteRange] = useState<DTERange>(DEFAULT_DTE);
+  const [deltaRange, setDeltaRange] = useState<DeltaRange>(DEFAULT_DELTA);
+  const [annReturnRange, setAnnReturnRange] = useState<AnnReturnRange>(DEFAULT_ANN_RETURN);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [screenerForecasts, setScreenerForecasts] = useState<Record<string, any>>({});
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -503,34 +506,37 @@ export default function Home() {
 
   const marketRegime = analysis?.marketRegime ?? screenerData?.marketRegime ?? null;
 
-  // Client-side DTE filtering — filter already-fetched puts by selected DTE range
+  // Client-side filtering — filter already-fetched puts by DTE, Delta, and Annualized Return
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const matchesFilters = useCallback((p: any) => {
+    const absDelta = Math.abs(p.delta ?? 0);
+    const annReturn = p.annualizedReturn ?? 0;
+    return (
+      p.dte >= dteRange.min && p.dte <= dteRange.max &&
+      absDelta >= deltaRange.min && absDelta <= deltaRange.max &&
+      annReturn >= annReturnRange.min && annReturn <= annReturnRange.max
+    );
+  }, [dteRange, deltaRange, annReturnRange]);
+
   const filteredAnalysisPuts = useMemo(() => {
     if (!analysis?.scoredPuts) return [];
-    return analysis.scoredPuts.filter(
-      (p) => p.dte >= dteRange.min && p.dte <= dteRange.max
-    );
-  }, [analysis?.scoredPuts, dteRange]);
+    return analysis.scoredPuts.filter(matchesFilters);
+  }, [analysis?.scoredPuts, matchesFilters]);
 
   const filteredTop10 = useMemo(() => {
     if (!screenerData?.top10) return [];
-    return screenerData.top10.filter(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (p: any) => p.dte >= dteRange.min && p.dte <= dteRange.max
-    );
-  }, [screenerData?.top10, dteRange]);
+    return screenerData.top10.filter(matchesFilters);
+  }, [screenerData?.top10, matchesFilters]);
 
   const filteredScreenerResults = useMemo(() => {
     if (!screenerData?.results) return [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return screenerData.results.map((stock: any) => ({
       ...stock,
-      topPuts: stock.topPuts?.filter(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (p: any) => p.dte >= dteRange.min && p.dte <= dteRange.max
-      ) ?? [],
+      topPuts: stock.topPuts?.filter(matchesFilters) ?? [],
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     })).filter((stock: any) => stock.topPuts.length > 0);
-  }, [screenerData?.results, dteRange]);
+  }, [screenerData?.results, matchesFilters]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
@@ -736,6 +742,7 @@ export default function Home() {
                 currentPrice={singleForecast.current_price}
                 symbol={analysis.symbol}
                 confidence={singleForecast.confidence}
+                modelConfidence={singleForecast.model_confidence}
                 dteMarkers={filteredAnalysisPuts.slice(0, 3).map((p: any) => ({
                   dte: p.dte,
                   label: `${p.strikePrice} (${p.dte}d)`,
@@ -803,16 +810,20 @@ export default function Home() {
             </div>
           )}
 
-          {/* DTE Filter — directly above puts table */}
-          <div className="flex items-center gap-3">
-            <DTESelector selected={dteRange} onChange={setDteRange} />
-            {analysis.scoredPuts.length > 0 && (
-              <span className="text-xs text-gray-500 whitespace-nowrap">
-                {filteredAnalysisPuts.length === analysis.scoredPuts.length
-                  ? `${filteredAnalysisPuts.length} puts`
-                  : `${filteredAnalysisPuts.length} of ${analysis.scoredPuts.length} puts`}
-              </span>
-            )}
+          {/* Filters — directly above puts table */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <DTESelector selected={dteRange} onChange={setDteRange} />
+              {analysis.scoredPuts.length > 0 && (
+                <span className="text-xs text-gray-500 whitespace-nowrap">
+                  {filteredAnalysisPuts.length === analysis.scoredPuts.length
+                    ? `${filteredAnalysisPuts.length} puts`
+                    : `${filteredAnalysisPuts.length} of ${analysis.scoredPuts.length} puts`}
+                </span>
+              )}
+            </div>
+            <DeltaSelector selected={deltaRange} onChange={setDeltaRange} />
+            <AnnReturnSelector selected={annReturnRange} onChange={setAnnReturnRange} />
           </div>
 
           <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
@@ -822,18 +833,18 @@ export default function Home() {
             />
           </div>
 
-          {/* Strategy Guide - Schwab-Optimized */}
+          {/* Strategy Guide - Research-Backed */}
           <div className="bg-gray-800/30 border border-gray-700/50 rounded-lg p-4">
             <h3 className="text-sm font-medium text-gray-400 mb-3">
-              Schwab Cash-Secured Put Strategy Reference
+              Cash-Secured Put Strategy Reference
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
               <div>
                 <h4 className="text-white font-medium mb-1">Entry Criteria</h4>
                 <ul className="text-gray-400 space-y-1 list-disc list-inside">
-                  <li>Delta: -0.15 to -0.30 (sweet spot)</li>
-                  <li>DTE: 30-45 days optimal</li>
-                  <li>IV Rank &gt; 50% (sell rich premium)</li>
+                  <li>Delta: -0.14 to -0.22 (tastytrade/DDO sweet spot)</li>
+                  <li>DTE: 30-45 days (tastytrade/DDO optimal)</li>
+                  <li>IV Rank &gt; 50% (Schwab 56.8% win rate data)</li>
                   <li>Strike at/below support level</li>
                   <li>Stability score &gt; 60</li>
                   <li>No earnings within DTE window</li>
@@ -841,28 +852,33 @@ export default function Home() {
                 </ul>
               </div>
               <div>
-                <h4 className="text-white font-medium mb-1">Management</h4>
+                <h4 className="text-white font-medium mb-1">Management Guidelines</h4>
                 <ul className="text-gray-400 space-y-1 list-disc list-inside">
-                  <li>Close at 50% of max profit</li>
-                  <li>Stop loss at 2x premium received</li>
-                  <li>Roll at 21 DTE if still profitable</li>
+                  <li>Take profit at 25-50% of max profit</li>
+                  <li className="text-blue-400/80">Manage/roll at 21 DTE (strongest rule)</li>
+                  <li>Stop loss ~2x credit (guideline, not rigid)</li>
                   <li>Roll down and out for net credit only</li>
                   <li>Never hold through earnings</li>
-                  <li>Know when to take assignment</li>
+                  <li>Managing at all &gt; holding to expiration</li>
                 </ul>
               </div>
               <div>
-                <h4 className="text-white font-medium mb-1">Schwab Risk Rules</h4>
+                <h4 className="text-white font-medium mb-1">Risk & Sizing</h4>
                 <ul className="text-gray-400 space-y-1 list-disc list-inside">
-                  <li>Cash-secured: full collateral reserved</li>
+                  <li>Cash-secured: full collateral (strike x 100)</li>
                   <li>Max 5-10% of capital per position</li>
-                  <li>Only sell on stocks you&apos;d own</li>
-                  <li>Watch ex-dividend for early assignment</li>
+                  <li>Only sell on stocks you&apos;d own if assigned</li>
                   <li>Reduce size when VIX &gt; 30</li>
-                  <li>Prefer beta &lt; 1.3 underlyings</li>
+                  <li>Prefer beta &lt; 1.3 underlyings (CBOE data)</li>
+                  <li>Small accounts: consider vertical spreads</li>
                 </ul>
               </div>
             </div>
+            <p className="text-[10px] text-gray-600 mt-3">
+              Sources: tastytrade/tastylive studies, DataDrivenOptions, Schwab, Spintwig backtests, CBOE PUT index, Early Retirement Now.
+              The 21 DTE rule and profit-taking (25-50%) are the most validated across all sources. The 2x stop loss is a starting point, not universally agreed upon.
+              Each standard contract = 100 shares (OCC). There are no widely available mini equity options.
+            </p>
           </div>
         </div>
       )}
@@ -870,17 +886,21 @@ export default function Home() {
       {/* Screener Results */}
       {activeTab === "screen" && (
         <div className="space-y-6">
-          {/* DTE Filter — shown once screener has data or is loading */}
-          {(screenerData || screenLoading) && (
-            <div className="flex items-center gap-3">
-              <DTESelector selected={dteRange} onChange={setDteRange} />
-              {screenerData?.top10?.length > 0 && !screenLoading && (
-                <span className="text-xs text-gray-500 whitespace-nowrap">
-                  {filteredTop10.length === screenerData.top10.length
-                    ? `${filteredTop10.length} top puts`
-                    : `${filteredTop10.length} of ${screenerData.top10.length} top puts`}
-                </span>
-              )}
+          {/* Filters — shown only after screening completes */}
+          {screenerData && !screenLoading && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                <DTESelector selected={dteRange} onChange={setDteRange} />
+                {screenerData?.top10?.length > 0 && (
+                  <span className="text-xs text-gray-500 whitespace-nowrap">
+                    {filteredTop10.length === screenerData.top10.length
+                      ? `${filteredTop10.length} top puts`
+                      : `${filteredTop10.length} of ${screenerData.top10.length} top puts`}
+                  </span>
+                )}
+              </div>
+              <DeltaSelector selected={deltaRange} onChange={setDeltaRange} />
+              <AnnReturnSelector selected={annReturnRange} onChange={setAnnReturnRange} />
             </div>
           )}
 
@@ -907,6 +927,7 @@ export default function Home() {
                         currentPrice={fc.current_price}
                         symbol={sym}
                         confidence={fc.confidence}
+                        modelConfidence={fc.model_confidence}
                       />
                     );
                   }

@@ -103,12 +103,13 @@ Uses **Neon** (serverless Postgres) via `@neondatabase/serverless`. Schema is au
 3. **Close**: User clicks "Close" on an open trade → selects outcome (Expired/Profit/Loss/Assigned) → P&L auto-calculated (quantity-aware)
 4. **Track**: Dashboard shows cumulative P&L, win rate, profit factor, max drawdown, monthly performance, per-symbol breakdown, and score-vs-outcome analysis
 
-### Tastytrade Management Rules (Auto-Calculated)
+### Management Targets (Research-Backed Defaults, Auto-Calculated)
 
-- **Profit target**: Close at 50% profit (buy back at 50% of premium received)
-- **Stop loss**: Stop at 2x credit loss (buy back at 3x the premium received)
-- **Management date**: Roll or close evaluation at 21 DTE before expiration
+- **Profit target**: Close at 50% profit (buy back at 50% of premium received). Default from tastytrade; 25% also validated for faster capital turnover.
+- **Stop loss**: Stop at 2x credit loss (buy back at 3x premium). This is a tastytrade **starting guideline**, not an ironclad rule — contested by SJ Options backtests; some practitioners prefer wider stops or purely mechanical 21 DTE management.
+- **Management date**: Roll or close at 21 DTE before expiration. **Most validated rule** across all sources — reduces gamma risk.
 - These values are stored per-trade (`profit_target_price`, `stop_loss_price`, `management_date`)
+- UI presents these as guidelines with research context, not rigid rules
 
 ### P&L Calculation
 
@@ -170,16 +171,32 @@ capital_events (
 
 6. **Data source status display** - Shows connected/degraded/down status so users know when data is stale or unavailable. Lists failed symbols in degraded mode.
 
-## Research References
+## Research References & Methodology Evaluation
 
-- tastytrade: 45 DTE, 16 delta, manage at 50% profit, stop at 2x credit; avoid selling through earnings
-- DataDrivenOptions: 20 delta optimizes theta for short puts
-- Schwab: IV Rank > 30 + IV Percentile > 50 produces 56.8% win rate vs 48.2% unfiltered
+### Entry Criteria (Strongly Validated)
+- **Delta 14-22**: tastytrade 16 delta (1 SD) + DataDrivenOptions 20 delta. Both validated; 14-22 range captures the sweet spot. Spintwig: 16 delta with leverage has better Sharpe ratio than 30 delta.
+- **DTE 30-45**: tastytrade 45 DTE + DataDrivenOptions 35-45 DTE. Both validated. Longer DTEs (60+) have diminishing theta efficiency.
+- **IV Rank > 50**: Schwab data shows 56.8% win rate vs 48.2% unfiltered. Strongly validated.
+- **VIX 15-25 optimal**: CBOE PUT index data. VIX >35 = crisis regime (ERN analysis).
+- **Beta ≤ 1.2**: CBOE research shows lower-beta underlyings have higher put-selling win rates.
+
+### Management Rules (Nuanced — NOT All Ironclad)
+- **Profit target 25-50%**: STRONGLY VALIDATED. tastytrade Sept 2018 study: managing at 25%, 50%, or 21 DTE all outperform holding to expiration. 50% = higher absolute P/L. 25% = faster capital turnover. Key: managing at all matters more than the exact percentage.
+- **21 DTE management**: MOST VALIDATED RULE. Universally agreed upon across tastytrade, DataDrivenOptions, Option Alpha. Gamma risk accelerates near expiration; rolling at 21 DTE reduces this exposure.
+- **Stop loss at 2x credit (3x premium)**: CONTESTED GUIDELINE. tastytrade presents as starting point, not strict rule. SJ Options 11-year SPX backtest showed underwhelming results. Third-party tests suggest wider stops (3-4x) or mechanical 21 DTE management can outperform fixed stops. Some practitioners prefer no fixed stop, relying on 21 DTE management as the primary risk mechanism.
+- **Never hold through earnings**: Strongly validated across all sources.
+
+### Contract Sizing
+- Standard US equity options = 100 shares per contract (OCC mandated). No exceptions for retail equity options.
+- Mini options (10 shares) were introduced in 2013 for 5 symbols only, delisted by late 2014 due to poor liquidity and disproportionate commission costs.
+- Small accounts should consider vertical spreads (bull put spreads) for lower capital requirements. Example: $400 margin for a 4-wide spread vs $13,000+ for a cash-secured put.
+
+### Additional Sources
 - Spintwig: SPY wheel backtests show Sharpe 1.08 vs 0.70 buy-hold
-- CBOE: Lower-beta underlyings (≤1.2) have higher put-selling win rates; PUT index data shows VIX 15-25 is optimal
 - Early Retirement Now: Wheel strategy struggles in prolonged bear markets (VIX >35 regime)
 - Schaeffer's Research: Heavy OI at strikes creates support/resistance zones for strike selection
 - Standard TA: RSI 30/70 standard boundaries; for put sellers, RSI >80 = high pullback risk
+- Option Alpha: Similar framework to tastytrade, emphasizes "trade small, trade often" + automation
 
 ## Decision Assistant Rule System
 

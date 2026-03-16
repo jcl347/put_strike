@@ -456,16 +456,16 @@ export default function Top10Puts({ puts, onTradeSimulated }: Top10PutsProps) {
                     </div>
                   </div>
 
-                  {/* Management Rules */}
+                  {/* Management Guidelines */}
                   <div className="mt-3 pt-3 border-t border-gray-700/50 flex items-center flex-wrap gap-2 text-xs">
-                    <span className="px-2 py-1 bg-gray-700/50 rounded text-gray-300">
-                      Close at 50% profit (${(midPrice * 50).toFixed(0)} gain)
+                    <span className="px-2 py-1 bg-gray-700/50 rounded text-gray-300" title="Strongly validated by tastytrade, DataDrivenOptions. 25% also viable for faster capital turnover.">
+                      Take profit ~50% (${(midPrice * 50).toFixed(0)} gain)
                     </span>
-                    <span className="px-2 py-1 bg-gray-700/50 rounded text-gray-300">
-                      Stop at 2x credit (${(midPrice * 100).toFixed(0)} loss)
+                    <span className="px-2 py-1 bg-gray-700/50 rounded text-gray-300" title="Tastytrade guideline. Contested — some studies show wider stops or mechanical 21 DTE management works better.">
+                      Stop ~2x credit (${(midPrice * 100).toFixed(0)} loss)
                     </span>
-                    <span className="px-2 py-1 bg-gray-700/50 rounded text-gray-300">
-                      Roll at 21 DTE if profitable
+                    <span className="px-2 py-1 bg-blue-900/30 rounded text-blue-300" title="Most validated rule. Gamma risk accelerates near expiration. Roll or close to manage risk.">
+                      Manage at 21 DTE
                     </span>
                     <button
                       onClick={(e) => { e.stopPropagation(); setSimulatingPut(put); }}

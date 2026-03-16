@@ -87,10 +87,16 @@ export async function POST(request: NextRequest) {
     const qty = quantity ?? 1;
     const collateral = strikePrice * 100 * qty;
 
-    // Tastytrade management targets
-    // Close at 50% profit: buy back at half the premium received
+    // Management targets (research-backed defaults)
+    // Profit target: 50% of premium (strongly validated by tastytrade, DataDrivenOptions).
+    //   25% also viable for faster capital turnover (tastytrade Sept 2018 study).
+    // Stop loss: buy back at 3x premium = 2x credit loss.
+    //   This is a tastytrade starting guideline, NOT an ironclad rule.
+    //   SJ Options 11-year backtest showed mixed results; some studies suggest wider stops
+    //   (3-4x) or pure mechanical 21 DTE management outperforms fixed stops.
+    // Management date: 21 DTE — most universally validated rule across all sources.
+    //   Gamma risk accelerates near expiration; rolling at 21 DTE reduces this exposure.
     const profitTargetPrice = premiumReceived * 0.5;
-    // Stop at 2x credit loss: buy back at 3x premium (lost 2x, paid 3x to close)
     const stopLossPrice = premiumReceived * 3;
     // Management date: 21 DTE before expiration
     const expDate = new Date(expiration);

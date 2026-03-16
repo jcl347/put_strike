@@ -401,7 +401,7 @@ function ManagementAlerts({ trades }: { trades: Trade[] }) {
 
   return (
     <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-      <h3 className="text-sm font-medium text-gray-400 mb-2">Management Alerts (tastytrade)</h3>
+      <h3 className="text-sm font-medium text-gray-400 mb-2">Management Alerts</h3>
       <div className="space-y-1.5">
         {alerts.map((a, i) => (
           <div key={i} className={`px-3 py-2 rounded-lg border text-xs flex items-center gap-2 ${urgencyColors[a.urgency]}`}>
@@ -555,6 +555,8 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
   const [closingTrade, setClosingTrade] = useState<Trade | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [filter, setFilter] = useState<"all" | "OPEN" | "closed">("all");
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -596,6 +598,19 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
       if (res.ok) fetchData();
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleResetAll = async () => {
+    setResetting(true);
+    try {
+      const res = await fetch("/api/trades/reset", { method: "DELETE" });
+      if (res.ok) {
+        setShowResetConfirm(false);
+        fetchData();
+      }
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -718,12 +733,23 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-medium text-gray-400">Trade History</h3>
-          <div className="flex gap-1">
-            {(["all", "OPEN", "closed"] as const).map((f) => (
-              <button key={f} onClick={() => setFilter(f)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${filter === f ? "bg-blue-600 text-white" : "bg-gray-700 text-gray-400 hover:text-white"}`}>
-                {f === "all" ? "All" : f === "OPEN" ? "Open" : "Closed"}
+          <div className="flex items-center gap-2">
+            <div className="flex gap-1">
+              {(["all", "OPEN", "closed"] as const).map((f) => (
+                <button key={f} onClick={() => setFilter(f)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${filter === f ? "bg-blue-600 text-white" : "bg-gray-700 text-gray-400 hover:text-white"}`}>
+                  {f === "all" ? "All" : f === "OPEN" ? "Open" : "Closed"}
+                </button>
+              ))}
+            </div>
+            {trades.length > 0 && (
+              <button
+                onClick={() => setShowResetConfirm(true)}
+                className="px-3 py-1 rounded text-xs font-medium bg-gray-700 text-red-400 hover:bg-red-900/40 hover:text-red-300 transition-colors"
+                title="Delete all trades and capital events"
+              >
+                Reset All
               </button>
-            ))}
+            )}
           </div>
         </div>
 
@@ -741,6 +767,42 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
       </div>
 
       {closingTrade && <CloseTradeModal trade={closingTrade} onClose={() => setClosingTrade(null)} onSuccess={() => { setClosingTrade(null); fetchData(); }} />}
+
+      {/* Reset Confirmation Modal */}
+      {showResetConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setShowResetConfirm(false)}>
+          <div className="bg-gray-900 border border-red-700/50 rounded-xl p-6 w-full max-w-sm mx-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-full bg-red-900/40 flex items-center justify-center text-red-400 text-lg shrink-0">!</div>
+              <h3 className="text-lg font-semibold text-white">Reset All Data?</h3>
+            </div>
+            <p className="text-sm text-gray-400 mb-1">
+              This will permanently delete:
+            </p>
+            <ul className="text-sm text-gray-400 mb-4 list-disc list-inside space-y-0.5">
+              <li><span className="text-white font-medium">{trades.length}</span> trade{trades.length !== 1 ? "s" : ""} (open and closed)</li>
+              <li>All capital deposits and withdrawals</li>
+              <li>All P&L history and statistics</li>
+            </ul>
+            <p className="text-xs text-red-400/80 mb-4">This action cannot be undone.</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowResetConfirm(false)}
+                className="flex-1 px-4 py-2 bg-gray-800 text-gray-400 rounded-lg hover:bg-gray-700 transition-colors text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleResetAll}
+                disabled={resetting}
+                className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white font-medium rounded-lg transition-colors text-sm"
+              >
+                {resetting ? "Deleting..." : "Delete Everything"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
