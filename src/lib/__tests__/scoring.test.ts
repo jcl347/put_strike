@@ -390,4 +390,45 @@ describe("Black-Scholes Validation", () => {
     expect(expectedCall).toBeGreaterThan(0);
     expect(expectedCall).toBeGreaterThan(putP); // call > put for ATM when r > 0
   });
+
+  test("delta monotonicity: deeper OTM → smaller |delta|", () => {
+    // At 45 DTE, 25% IV, deltas should decrease monotonically as strike decreases
+    const strikes = [100, 95, 90, 85, 80];
+    const deltas = strikes.map(K =>
+      Math.abs(putGreeks({ S: 100, K, T: 45/365, r: 0.045, sigma: 0.25 }).delta)
+    );
+    for (let i = 1; i < deltas.length; i++) {
+      expect(deltas[i]).toBeLessThan(deltas[i - 1]);
+    }
+  });
+
+  test("realistic put-selling deltas match expected ranges", () => {
+    // 5% OTM at 45 DTE with 25% IV → delta ~0.20-0.28
+    const otm5 = putGreeks({ S: 200, K: 190, T: 45/365, r: 0.045, sigma: 0.25, q: 0.005 });
+    expect(Math.abs(otm5.delta)).toBeGreaterThan(0.15);
+    expect(Math.abs(otm5.delta)).toBeLessThan(0.35);
+
+    // 10% OTM → delta ~0.05-0.15
+    const otm10 = putGreeks({ S: 200, K: 180, T: 45/365, r: 0.045, sigma: 0.25, q: 0.005 });
+    expect(Math.abs(otm10.delta)).toBeGreaterThan(0.03);
+    expect(Math.abs(otm10.delta)).toBeLessThan(0.20);
+
+    // ATM → delta ~0.45-0.50
+    const atm = putGreeks({ S: 100, K: 100, T: 45/365, r: 0.045, sigma: 0.25 });
+    expect(Math.abs(atm.delta)).toBeGreaterThan(0.40);
+    expect(Math.abs(atm.delta)).toBeLessThan(0.55);
+  });
+
+  test("IV recovery produces accurate delta when Yahoo IV is missing", () => {
+    // Simulate: compute a put price, then recover IV from that price, then compute delta
+    // This tests the fallback path used when Yahoo returns impliedVolatility=0
+    const realSigma = 0.25;
+    const params = { S: 200, K: 190, T: 45/365, r: 0.045, q: 0.005 };
+    const realPrice = putPrice({ ...params, sigma: realSigma });
+    const recoveredSigma = impliedVolatility(realPrice, params.S, params.K, params.T, params.r, params.q);
+    const realDelta = putGreeks({ ...params, sigma: realSigma }).delta;
+    const recoveredDelta = putGreeks({ ...params, sigma: recoveredSigma }).delta;
+    // Delta from recovered IV should be within 0.005 of real delta
+    expect(Math.abs(realDelta - recoveredDelta)).toBeLessThan(0.005);
+  });
 });

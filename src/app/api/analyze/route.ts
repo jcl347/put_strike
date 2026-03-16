@@ -6,7 +6,7 @@ import {
   getVIX,
   getStockContext,
 } from "@/lib/yahoo-finance";
-import { putGreeks } from "@/lib/black-scholes";
+import { putGreeks, impliedVolatility as computeIV } from "@/lib/black-scholes";
 import {
   type PutCandidate,
   type CompanyStability,
@@ -120,13 +120,26 @@ export async function GET(request: NextRequest) {
         const effectiveBid = p.bid > 0 ? p.bid : p.lastPrice;
         const effectiveAsk = p.ask > 0 ? p.ask : p.lastPrice;
         const T = p.dte / 365;
+        const q = (quote.dividendYield || 0) / 100;
+
+        // Use Yahoo's IV when available; otherwise recover IV from market price
+        // This prevents ~50% delta errors from a blind 30% fallback
+        let sigma = p.impliedVolatility > 0 ? p.impliedVolatility : 0;
+        if (sigma <= 0) {
+          const midPrice = (effectiveBid + effectiveAsk) / 2;
+          if (midPrice > 0 && T > 0) {
+            sigma = computeIV(midPrice, quote.price, p.strike, T, riskFreeRate, q);
+          }
+          if (sigma <= 0.01) sigma = 0.3; // last resort fallback
+        }
+
         const greeks = putGreeks({
           S: quote.price,
           K: p.strike,
           T,
           r: riskFreeRate,
-          sigma: p.impliedVolatility > 0 ? p.impliedVolatility : 0.3,
-          q: (quote.dividendYield || 0) / 100,
+          sigma,
+          q,
         });
 
         allPuts.push({
@@ -140,8 +153,7 @@ export async function GET(request: NextRequest) {
           lastPrice: p.lastPrice,
           volume: p.volume,
           openInterest: p.openInterest,
-          impliedVolatility:
-            p.impliedVolatility > 0 ? p.impliedVolatility * 100 : 30,
+          impliedVolatility: sigma * 100,
           delta: greeks.delta,
           gamma: greeks.gamma,
           theta: greeks.theta,
