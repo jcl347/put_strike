@@ -24,7 +24,8 @@ PutStrike screens 80+ high-liquidity stocks, scores put selling opportunities us
 │  ├── /api/screen-single — Per-stock screener            │
 │  ├── /api/predict      — Ensemble + iTransformer pred.  │
 │  ├── /api/options      — Raw options chain              │
-│  └── /api/search       — Symbol autocomplete            │
+│  ├── /api/search       — Symbol autocomplete            │
+│  └── /api/trades       — Simulation trading CRUD + stats│
 └──────────────┬──────────────────────────────────────────┘
                │
 ┌──────────────▼──────────────────────────────────────────┐
@@ -60,7 +61,8 @@ PutStrike screens 80+ high-liquidity stocks, scores put selling opportunities us
 │  Data Sources                                           │
 │  ├── yahoo-finance2 (quotes, options, OHLCV)            │
 │  ├── Macro: ^VIX, ^VIX3M, ^TNX, DX-Y.NYB, GC=F, CL=F │
-│  └── HuggingFace Hub (ONNX model download + cache)     │
+│  ├── HuggingFace Hub (ONNX model download + cache)     │
+│  └── Neon Postgres (simulation trading persistence)    │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -117,6 +119,55 @@ npm run dev          # Development server at http://localhost:3000
 npm run build        # Production build (includes TypeScript + lint checks)
 npx jest             # 31 validation tests
 ```
+
+## Simulation Trading Setup (Neon Postgres)
+
+PutStrike includes a simulation trading system that lets you paper-trade put sales from scored recommendations and track P&L over time.
+
+### Option A: Vercel Dashboard (Recommended for Deployment)
+
+Vercel has built-in Neon integration. This is the easiest path if deploying on Vercel.
+
+1. Go to your Vercel project → **Storage** tab
+2. Click **Connect Database** → select your existing Neon database, or click **Create Database** to create a new one
+3. Vercel auto-injects `POSTGRES_URL` (and related env vars) into your project — no manual config needed
+4. Redeploy and the trades feature is live
+
+PutStrike auto-detects both `POSTGRES_URL` (Vercel) and `DATABASE_URL` (manual), so either works.
+
+### Option B: Manual Neon Setup (Local Dev or Self-Hosted)
+
+1. Sign up at [neon.tech](https://neon.tech) (free tier: 0.5 GB storage, always-on compute)
+2. Create a new project (any name, e.g., "putstrike")
+3. Copy the connection string from the Neon dashboard
+4. Create `.env.local` in the project root:
+
+```bash
+# Neon Postgres connection string for simulation trading
+DATABASE_URL="postgresql://user:password@ep-xxx-xxx-123456.us-east-2.aws.neon.tech/neondb?sslmode=require"
+```
+
+5. Restart the dev server
+
+### Using Simulation Trading
+
+No migration step needed — the schema auto-creates on first API request.
+
+1. Run the screener or analyze a stock
+2. Expand any put row and click **"Simulate Trade"**
+3. Review the pre-filled trade parameters and click **"Open Simulated Trade"**
+4. Switch to the **Trades** tab to view your dashboard
+5. Close trades by clicking **"Close"** and selecting the outcome (Expired, Profit, Loss, Assigned)
+
+### Trade Analytics
+
+The Trades dashboard provides:
+- **KPI Cards**: Total P&L, win rate, avg return, capital at risk, best/worst trade
+- **Win Rate Donut**: Visual win/loss ratio (SVG)
+- **Cumulative P&L Chart**: Equity curve across all closed trades (SVG)
+- **Monthly P&L Bars**: Monthly performance breakdown (SVG)
+- **Per-Symbol Breakdown**: Horizontal bar chart ranked by total P&L per stock
+- **Score vs Outcome**: Compares avg entry score for winners vs losers — validates the scoring model
 
 ## Research Foundation
 

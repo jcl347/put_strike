@@ -15,6 +15,7 @@ import DTESelector, { DEFAULT_DTE, type DTERange } from "@/components/DTESelecto
 import StockForecast from "@/components/StockForecast";
 import TimeSeriesChart from "@/components/TimeSeriesChart";
 import ConcordanceCard from "@/components/ConcordanceCard";
+import TradesDashboard from "@/components/TradesDashboard";
 
 interface AnalysisData {
   symbol: string;
@@ -127,7 +128,8 @@ export default function Home() {
   const [screenProgress, setScreenProgress] = useState<ScreenProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"analyze" | "screen">("analyze");
+  const [activeTab, setActiveTab] = useState<"analyze" | "screen" | "trades">("analyze");
+  const [tradeRefreshKey, setTradeRefreshKey] = useState(0);
   const [dataSourceStatus, setDataSourceStatus] = useState<"connected" | "degraded" | "down" | null>(null);
   const abortRef = useRef(false);
   const [dteRange, setDteRange] = useState<DTERange>(DEFAULT_DTE);
@@ -606,7 +608,14 @@ export default function Home() {
             Single Stock Analysis
           </button>
           <button
-            onClick={runScreener}
+            onClick={() => {
+              if (screenerData && !screenLoading) {
+                // Results exist — just switch to the tab
+                setActiveTab("screen");
+              } else {
+                runScreener();
+              }
+            }}
             disabled={screenLoading}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               activeTab === "screen"
@@ -615,6 +624,28 @@ export default function Home() {
             }`}
           >
             {screenLoading ? "Screening..." : "Screen Top Stocks"}
+          </button>
+          {activeTab === "screen" && screenerData && !screenLoading && (
+            <button
+              onClick={runScreener}
+              className="px-3 py-2 rounded-lg text-sm font-medium bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white transition-colors flex items-center gap-1.5"
+              title="Re-run screener with fresh data"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Refresh
+            </button>
+          )}
+          <button
+            onClick={() => setActiveTab("trades")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === "trades"
+                ? "bg-green-600 text-white"
+                : "bg-gray-800 text-gray-400 hover:text-white"
+            }`}
+          >
+            Trades
           </button>
         </div>
       </div>
@@ -848,7 +879,7 @@ export default function Home() {
 
           {/* Top 10 Picks — filtered by DTE */}
           {filteredTop10.length > 0 && !screenLoading && (
-            <Top10Puts puts={filteredTop10} />
+            <Top10Puts puts={filteredTop10} onTradeSimulated={() => setTradeRefreshKey((k) => k + 1)} />
           )}
 
           {/* iTransformer Forecasts for top stocks */}
@@ -923,8 +954,13 @@ export default function Home() {
         </div>
       )}
 
+      {/* Trades Dashboard */}
+      {activeTab === "trades" && (
+        <TradesDashboard refreshKey={tradeRefreshKey} />
+      )}
+
       {/* Empty State */}
-      {!analysis && !screenerData && !loading && !screenLoading && !error && (
+      {!analysis && !screenerData && !loading && !screenLoading && !error && activeTab !== "trades" && (
         <div className="text-center py-16">
           <div className="text-5xl mb-4">&#128200;</div>
           <h2 className="text-xl font-semibold text-white mb-2">
