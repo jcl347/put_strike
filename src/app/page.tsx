@@ -12,6 +12,7 @@ import PutDecisionAssistant from "@/components/PutDecisionAssistant";
 import PricePrediction from "@/components/PricePrediction";
 import HFModelStatus from "@/components/HFModelStatus";
 import DTESelector, { DEFAULT_DTE, type DTERange } from "@/components/DTESelector";
+import { DeltaSelector, AnnReturnSelector, DEFAULT_DELTA, DEFAULT_ANN_RETURN, type DeltaRange, type AnnReturnRange } from "@/components/PutFilters";
 import StockForecast from "@/components/StockForecast";
 import TimeSeriesChart from "@/components/TimeSeriesChart";
 import ConcordanceCard from "@/components/ConcordanceCard";
@@ -133,6 +134,8 @@ export default function Home() {
   const [dataSourceStatus, setDataSourceStatus] = useState<"connected" | "degraded" | "down" | null>(null);
   const abortRef = useRef(false);
   const [dteRange, setDteRange] = useState<DTERange>(DEFAULT_DTE);
+  const [deltaRange, setDeltaRange] = useState<DeltaRange>(DEFAULT_DELTA);
+  const [annReturnRange, setAnnReturnRange] = useState<AnnReturnRange>(DEFAULT_ANN_RETURN);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [screenerForecasts, setScreenerForecasts] = useState<Record<string, any>>({});
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -503,34 +506,37 @@ export default function Home() {
 
   const marketRegime = analysis?.marketRegime ?? screenerData?.marketRegime ?? null;
 
-  // Client-side DTE filtering — filter already-fetched puts by selected DTE range
+  // Client-side filtering — filter already-fetched puts by DTE, Delta, and Annualized Return
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const matchesFilters = useCallback((p: any) => {
+    const absDelta = Math.abs(p.delta ?? 0);
+    const annReturn = p.annualizedReturn ?? 0;
+    return (
+      p.dte >= dteRange.min && p.dte <= dteRange.max &&
+      absDelta >= deltaRange.min && absDelta <= deltaRange.max &&
+      annReturn >= annReturnRange.min && annReturn <= annReturnRange.max
+    );
+  }, [dteRange, deltaRange, annReturnRange]);
+
   const filteredAnalysisPuts = useMemo(() => {
     if (!analysis?.scoredPuts) return [];
-    return analysis.scoredPuts.filter(
-      (p) => p.dte >= dteRange.min && p.dte <= dteRange.max
-    );
-  }, [analysis?.scoredPuts, dteRange]);
+    return analysis.scoredPuts.filter(matchesFilters);
+  }, [analysis?.scoredPuts, matchesFilters]);
 
   const filteredTop10 = useMemo(() => {
     if (!screenerData?.top10) return [];
-    return screenerData.top10.filter(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (p: any) => p.dte >= dteRange.min && p.dte <= dteRange.max
-    );
-  }, [screenerData?.top10, dteRange]);
+    return screenerData.top10.filter(matchesFilters);
+  }, [screenerData?.top10, matchesFilters]);
 
   const filteredScreenerResults = useMemo(() => {
     if (!screenerData?.results) return [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return screenerData.results.map((stock: any) => ({
       ...stock,
-      topPuts: stock.topPuts?.filter(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (p: any) => p.dte >= dteRange.min && p.dte <= dteRange.max
-      ) ?? [],
+      topPuts: stock.topPuts?.filter(matchesFilters) ?? [],
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     })).filter((stock: any) => stock.topPuts.length > 0);
-  }, [screenerData?.results, dteRange]);
+  }, [screenerData?.results, matchesFilters]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
@@ -804,16 +810,20 @@ export default function Home() {
             </div>
           )}
 
-          {/* DTE Filter — directly above puts table */}
-          <div className="flex items-center gap-3">
-            <DTESelector selected={dteRange} onChange={setDteRange} />
-            {analysis.scoredPuts.length > 0 && (
-              <span className="text-xs text-gray-500 whitespace-nowrap">
-                {filteredAnalysisPuts.length === analysis.scoredPuts.length
-                  ? `${filteredAnalysisPuts.length} puts`
-                  : `${filteredAnalysisPuts.length} of ${analysis.scoredPuts.length} puts`}
-              </span>
-            )}
+          {/* Filters — directly above puts table */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <DTESelector selected={dteRange} onChange={setDteRange} />
+              {analysis.scoredPuts.length > 0 && (
+                <span className="text-xs text-gray-500 whitespace-nowrap">
+                  {filteredAnalysisPuts.length === analysis.scoredPuts.length
+                    ? `${filteredAnalysisPuts.length} puts`
+                    : `${filteredAnalysisPuts.length} of ${analysis.scoredPuts.length} puts`}
+                </span>
+              )}
+            </div>
+            <DeltaSelector selected={deltaRange} onChange={setDeltaRange} />
+            <AnnReturnSelector selected={annReturnRange} onChange={setAnnReturnRange} />
           </div>
 
           <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
@@ -876,17 +886,21 @@ export default function Home() {
       {/* Screener Results */}
       {activeTab === "screen" && (
         <div className="space-y-6">
-          {/* DTE Filter — shown only after screening completes */}
+          {/* Filters — shown only after screening completes */}
           {screenerData && !screenLoading && (
-            <div className="flex items-center gap-3">
-              <DTESelector selected={dteRange} onChange={setDteRange} />
-              {screenerData?.top10?.length > 0 && (
-                <span className="text-xs text-gray-500 whitespace-nowrap">
-                  {filteredTop10.length === screenerData.top10.length
-                    ? `${filteredTop10.length} top puts`
-                    : `${filteredTop10.length} of ${screenerData.top10.length} top puts`}
-                </span>
-              )}
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                <DTESelector selected={dteRange} onChange={setDteRange} />
+                {screenerData?.top10?.length > 0 && (
+                  <span className="text-xs text-gray-500 whitespace-nowrap">
+                    {filteredTop10.length === screenerData.top10.length
+                      ? `${filteredTop10.length} top puts`
+                      : `${filteredTop10.length} of ${screenerData.top10.length} top puts`}
+                  </span>
+                )}
+              </div>
+              <DeltaSelector selected={deltaRange} onChange={setDeltaRange} />
+              <AnnReturnSelector selected={annReturnRange} onChange={setAnnReturnRange} />
             </div>
           )}
 
