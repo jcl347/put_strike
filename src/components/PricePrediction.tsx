@@ -64,6 +64,26 @@ export default function PricePrediction({ prediction: p }: Props) {
   const ensembleColor = p.ensembleScore > 20 ? "text-green-400"
     : p.ensembleScore < -20 ? "text-red-400" : "text-yellow-400";
 
+  // Compute probability of profit using the forecast's confidence bands
+  // The 68% band corresponds to +/- 1 sigma, 95% band to +/- 1.96 sigma
+  // We estimate sigma from the 68% band, then compute P(price > strike) using normal CDF
+  const probOfProfit = (() => {
+    if (!selectedForecast) return 0;
+    const predicted = selectedForecast.predicted;
+    const sigma = (selectedForecast.upper68 - selectedForecast.lower68) / 2;
+    if (sigma <= 0) return 50;
+    // z-score: how many sigmas the strike is below the predicted price
+    const z = (predicted - p.optimalStrike) / sigma;
+    // Approximate normal CDF using Abramowitz & Stegun (same as black-scholes.ts)
+    const absZ = Math.abs(z);
+    const t = 1.0 / (1.0 + 0.2316419 * absZ);
+    const pdf = Math.exp(-0.5 * absZ * absZ) / Math.sqrt(2 * Math.PI);
+    const poly = ((((1.330274429 * t - 1.821255978) * t + 1.781477937) * t - 0.356563782) * t + 0.31938153) * t;
+    const cdf = 1.0 - pdf * poly;
+    const prob = z >= 0 ? cdf : 1.0 - cdf;
+    return Math.round(Math.max(5, Math.min(99, prob * 100)));
+  })();
+
   const riskColors = {
     low: { text: "text-green-400", bg: "bg-green-900/20" },
     moderate: { text: "text-yellow-400", bg: "bg-yellow-900/20" },
@@ -269,12 +289,8 @@ export default function PricePrediction({ prediction: p }: Props) {
         <div className="grid grid-cols-4 gap-3 text-center text-xs">
           <div className="bg-gray-900/50 rounded p-2">
             <div className="text-gray-500">Prob. of Profit</div>
-            <div className="text-green-400 font-bold text-lg">
-              {selectedForecast
-                ? `${Math.min(95, Math.max(55, Math.round(
-                    ((p.currentPrice - p.optimalStrike) / p.currentPrice * 100) * 5 + 60
-                  )))}%`
-                : "—"}
+            <div className={`font-bold text-lg ${probOfProfit >= 70 ? "text-green-400" : probOfProfit >= 55 ? "text-yellow-400" : "text-red-400"}`}>
+              {selectedForecast ? `${probOfProfit}%` : "—"}
             </div>
             <div className="text-gray-600">at ${p.optimalStrike} strike</div>
           </div>
@@ -290,9 +306,9 @@ export default function PricePrediction({ prediction: p }: Props) {
             </div>
           </div>
           <div className="bg-gray-900/50 rounded p-2">
-            <div className="text-gray-500">Risk/Reward</div>
+            <div className="text-gray-500">Distance OTM</div>
             <div className="text-white font-bold text-lg">
-              {((p.currentPrice - p.optimalStrike) / p.optimalStrike * 100).toFixed(1)}%
+              {((p.currentPrice - p.optimalStrike) / p.currentPrice * 100).toFixed(1)}%
             </div>
             <div className="text-gray-600">margin of safety</div>
           </div>

@@ -117,6 +117,9 @@ interface ScreenProgress {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type PredictionData = any;
 
+// Minimum model confidence (0-1) to display iTransformer predictions
+const MIN_ITRANSFORMER_CONFIDENCE = 0.6;
+
 export default function Home() {
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
   const [screenerData, setScreenerData] = useState<ScreenerData | null>(null);
@@ -255,8 +258,15 @@ export default function Home() {
       console.log(`[forecast] Running iTransformer inference for ${symbol}...`);
       const prediction = await runHFInference(symbol, price, data.featureMatrix);
       if (prediction) {
-        console.log(`[forecast] ${symbol}: iTransformer prediction complete`);
-        setSingleForecast(prediction);
+        if (prediction.model_confidence < MIN_ITRANSFORMER_CONFIDENCE) {
+          const pct = (prediction.model_confidence * 100).toFixed(0);
+          const msg = `iTransformer confidence too low (${pct}% < ${MIN_ITRANSFORMER_CONFIDENCE * 100}% threshold) — forecast excluded`;
+          console.warn(`[forecast] ${symbol}: ${msg}`);
+          setForecastError(msg);
+        } else {
+          console.log(`[forecast] ${symbol}: iTransformer prediction complete (${(prediction.model_confidence * 100).toFixed(0)}% confidence)`);
+          setSingleForecast(prediction);
+        }
       } else {
         const err = getLastError();
         const msg = err || `iTransformer inference returned null for ${symbol}`;
@@ -454,10 +464,14 @@ export default function Home() {
                     const fData = await fRes.json();
                     const prediction = await runHFInference(sym, price, fData.featureMatrix);
                     if (prediction) {
-                      // Attach historical prices for the chart
-                      (prediction as any)._historicalPrices = fData.historicalPrices;
-                      setScreenerForecasts((prev) => ({ ...prev, [sym]: prediction }));
-                      console.log(`[screener-forecast] ${sym}: forecast complete`);
+                      if (prediction.model_confidence < MIN_ITRANSFORMER_CONFIDENCE) {
+                        console.warn(`[screener-forecast] ${sym}: excluded — confidence ${(prediction.model_confidence * 100).toFixed(0)}% < ${MIN_ITRANSFORMER_CONFIDENCE * 100}% threshold`);
+                      } else {
+                        // Attach historical prices for the chart
+                        (prediction as any)._historicalPrices = fData.historicalPrices;
+                        setScreenerForecasts((prev) => ({ ...prev, [sym]: prediction }));
+                        console.log(`[screener-forecast] ${sym}: forecast complete (${(prediction.model_confidence * 100).toFixed(0)}% confidence)`);
+                      }
                     } else {
                       console.warn(`[screener-forecast] ${sym}: inference returned null`);
                     }
