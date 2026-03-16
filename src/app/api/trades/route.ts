@@ -43,6 +43,11 @@ export async function GET(request: NextRequest) {
 
 /**
  * POST /api/trades — Create a new simulated trade
+ *
+ * Tastytrade management fields are auto-calculated:
+ *   profit_target_price = 50% of premium (close at 50% profit)
+ *   stop_loss_price = 3x premium (stop at 2x credit = 3x the premium to buy back)
+ *   management_date = expiration - 21 DTE (roll/close evaluation date)
  */
 export async function POST(request: NextRequest) {
   const db = getDb();
@@ -66,6 +71,9 @@ export async function POST(request: NextRequest) {
       scoreAtEntry,
       stabilityScoreAtEntry,
       ivRankAtEntry,
+      vixAtEntry,
+      marketRegimeAtEntry,
+      quantity,
       notes,
     } = body;
 
@@ -76,19 +84,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const collateral = strikePrice * 100;
+    const qty = quantity ?? 1;
+    const collateral = strikePrice * 100 * qty;
+
+    // Tastytrade management targets
+    // Close at 50% profit: buy back at half the premium received
+    const profitTargetPrice = premiumReceived * 0.5;
+    // Stop at 2x credit loss: buy back at 3x premium (lost 2x, paid 3x to close)
+    const stopLossPrice = premiumReceived * 3;
+    // Management date: 21 DTE before expiration
+    const expDate = new Date(expiration);
+    const mgmtDate = new Date(expDate);
+    mgmtDate.setDate(mgmtDate.getDate() - 21);
+    const managementDate = mgmtDate.toISOString().split("T")[0];
 
     const rows = await db`
       INSERT INTO simulated_trades (
         symbol, company_name, strike_price, expiration, dte_at_entry,
         premium_received, stock_price_at_entry, delta_at_entry,
         score_at_entry, stability_score_at_entry, iv_rank_at_entry,
-        collateral, notes
+        collateral, quantity, profit_target_price, stop_loss_price,
+        management_date, vix_at_entry, market_regime_at_entry, notes
       ) VALUES (
         ${symbol}, ${companyName ?? null}, ${strikePrice}, ${expiration}, ${dteAtEntry ?? 0},
         ${premiumReceived}, ${stockPriceAtEntry}, ${deltaAtEntry ?? null},
         ${scoreAtEntry ?? null}, ${stabilityScoreAtEntry ?? null}, ${ivRankAtEntry ?? null},
-        ${collateral}, ${notes ?? null}
+        ${collateral}, ${qty}, ${profitTargetPrice}, ${stopLossPrice},
+        ${managementDate}, ${vixAtEntry ?? null}, ${marketRegimeAtEntry ?? null},
+        ${notes ?? null}
       )
       RETURNING *
     `;

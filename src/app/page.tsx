@@ -534,6 +534,11 @@ export default function Home() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
+      {/* Risk Disclaimer */}
+      <div className="mb-4 px-3 py-1.5 bg-yellow-900/10 border border-yellow-700/20 rounded text-[11px] text-yellow-600/80 leading-tight">
+        Stock market investments carry inherent risks. Prices fluctuate and evaluations change rapidly. Consult a financial advisor before making investment decisions.
+      </div>
+
       {/* Header */}
       <header className="mb-6">
         <div className="flex items-center gap-3 mb-2">
@@ -609,14 +614,16 @@ export default function Home() {
           </button>
           <button
             onClick={() => {
-              if (screenerData && !screenLoading) {
+              if (screenLoading) {
+                // Screening in progress — switch to tab to see progress bar
+                setActiveTab("screen");
+              } else if (screenerData) {
                 // Results exist — just switch to the tab
                 setActiveTab("screen");
               } else {
                 runScreener();
               }
             }}
-            disabled={screenLoading}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               activeTab === "screen"
                 ? "bg-blue-600 text-white"

@@ -49,14 +49,16 @@ All routes are `force-dynamic` (no caching — live data).
 
 - **`/api/trades`** - Simulated trades CRUD (Neon Postgres). Requires `DATABASE_URL`.
   - `GET /api/trades?status=OPEN|all` - List trades
-  - `POST /api/trades` - Create trade (symbol, strikePrice, expiration, premiumReceived, stockPriceAtEntry, etc.)
+  - `POST /api/trades` - Create trade with auto-calculated tastytrade management targets (profit_target_price = 50% premium, stop_loss_price = 3x premium, management_date = expiration − 21d). Supports quantity (contracts).
   - `PUT /api/trades/[id]` - Close trade (status, closePrice, stockPriceAtClose → auto-calculates P&L)
   - `DELETE /api/trades/[id]` - Delete trade
-  - `GET /api/trades/stats` - Aggregate statistics (win rate, cumulative P&L, monthly breakdown, per-symbol breakdown)
+  - `GET /api/trades/stats` - Aggregate statistics: win rate, profit factor, max drawdown, avg holding period, cumulative P&L timeline, monthly breakdown, per-symbol breakdown
+  - `GET /api/trades/capital` - Capital summary: deposits, withdrawals, portfolio value, available capital, return on capital, capital deployed
+  - `POST /api/trades/capital` - Add deposit or withdrawal event
 
 ### Frontend (`src/components/`)
 
-Client-side React components with Tailwind CSS (v4). Dark theme only.
+Client-side React components with Tailwind CSS (v4). Dark theme only. Compact risk disclaimer banner at top of page.
 
 - `SymbolSearch` - Debounced autocomplete with dropdown
 - `MarketRegime` - VIX-based regime indicator (color-coded)
@@ -67,15 +69,17 @@ Client-side React components with Tailwind CSS (v4). Dark theme only.
 - `PutTable` - Expandable table of scored puts with trade details
 - `ScreenerResults` - Multi-stock collapsible results view with stability scores
 - `ColabConnect` - iTransformer GPU model connection for Colab inference
-- `SimulateTradeModal` - Modal to create a simulated put trade from any scored put row. Pre-fills all trade parameters.
+- `SimulateTradeModal` - Modal to create a simulated put trade from any scored put row. Pre-fills all trade parameters. Includes quantity (contracts) selector, tastytrade management targets display (50% profit close, 2x credit stop, 21 DTE management), and position sizing summary (collateral, max gain, max loss).
 - `TradesDashboard` - Full simulation trading analytics with SVG charts:
-  - KPI cards (total P&L, win rate, avg return, open trades, best/worst trade)
+  - KPI cards (total P&L, win rate, profit factor, max drawdown, avg holding period, open trades)
+  - Capital management section (deposits/withdrawals, portfolio value, available capital, capital deployed %)
+  - Management alerts (21 DTE warnings, approaching expiration, tastytrade targets for each open trade)
   - Win rate donut chart (SVG)
   - Cumulative P&L line chart with trade dots (SVG)
   - Monthly P&L bar chart (SVG)
   - Per-symbol P&L breakdown with horizontal bars
   - Score vs outcome analysis (validates scoring model edge)
-  - Trade history list with filter (all/open/closed), close trade modal, delete
+  - Trade history list with filter (all/open/closed), close trade modal (with quantity support), delete
 - Data source status indicator (connected/degraded/down)
 
 ## Simulation Trading
@@ -94,19 +98,38 @@ Uses **Neon** (serverless Postgres) via `@neondatabase/serverless`. Schema is au
 
 ### Trade Lifecycle
 
-1. **Open**: User clicks "Simulate Trade" on any scored put → modal pre-fills all parameters → saved to DB
-2. **Close**: User clicks "Close" on an open trade → selects outcome (Expired/Profit/Loss/Assigned) → P&L auto-calculated
-3. **Track**: Dashboard shows cumulative P&L, win rate, monthly performance, per-symbol breakdown, and score-vs-outcome analysis
+1. **Open**: User clicks "Simulate Trade" on any scored put → modal pre-fills all parameters (including quantity) → tastytrade management targets auto-calculated → saved to DB
+2. **Monitor**: Dashboard shows management alerts — 21 DTE roll/close warnings, approaching expiration, profit targets and stop losses for each open position
+3. **Close**: User clicks "Close" on an open trade → selects outcome (Expired/Profit/Loss/Assigned) → P&L auto-calculated (quantity-aware)
+4. **Track**: Dashboard shows cumulative P&L, win rate, profit factor, max drawdown, monthly performance, per-symbol breakdown, and score-vs-outcome analysis
+
+### Tastytrade Management Rules (Auto-Calculated)
+
+- **Profit target**: Close at 50% profit (buy back at 50% of premium received)
+- **Stop loss**: Stop at 2x credit loss (buy back at 3x the premium received)
+- **Management date**: Roll or close evaluation at 21 DTE before expiration
+- These values are stored per-trade (`profit_target_price`, `stop_loss_price`, `management_date`)
 
 ### P&L Calculation
 
-- **Expired** (worthless): P&L = premium × 100 (full profit)
-- **Closed**: P&L = (premium received − close price) × 100
-- **Assigned**: P&L = premium × 100 − (strike − stock price at close) × 100
+- **Expired** (worthless): P&L = premium × 100 × quantity (full profit)
+- **Closed**: P&L = (premium received − close price) × 100 × quantity
+- **Assigned**: P&L = premium × 100 × quantity − (strike − stock price at close) × 100 × quantity
+
+### Capital Management
+
+- **Deposits/Withdrawals**: Track capital added or removed from the simulation fund
+- **Portfolio Value**: Net capital + realized P&L
+- **Available Capital**: Portfolio value − capital deployed in open positions
+- **Return on Capital**: Realized P&L / net capital deposited (%)
+- Stored in `capital_events` table (type, amount, notes, created_at)
 
 ### Key Analytics
 
 - **Win Rate**: % of closed trades with positive P&L
+- **Profit Factor**: Gross wins / gross losses (tastytrade key metric; >1.0 = profitable system)
+- **Max Drawdown**: Peak-to-trough from equity curve (calculated from cumulative P&L timeline)
+- **Avg Holding Period**: Average days from open to close (split by winners/losers)
 - **Score vs Outcome**: Compares average entry score for winners vs losers — validates the scoring model
 - **Cumulative P&L Chart**: SVG line chart showing equity curve across all closed trades
 - **Monthly P&L**: Bar chart of monthly returns
@@ -120,9 +143,16 @@ simulated_trades (
   symbol, company_name, strike_price, expiration, dte_at_entry,
   premium_received, stock_price_at_entry, delta_at_entry,
   score_at_entry, stability_score_at_entry, iv_rank_at_entry,
-  collateral, status (OPEN/CLOSED_PROFIT/CLOSED_LOSS/ASSIGNED/EXPIRED),
+  collateral, quantity, status (OPEN/CLOSED_PROFIT/CLOSED_LOSS/ASSIGNED/EXPIRED),
+  profit_target_price, stop_loss_price, management_date,
+  vix_at_entry, market_regime_at_entry,
   close_price, stock_price_at_close, pnl, pnl_percent,
   closed_at, notes, created_at, updated_at
+)
+
+capital_events (
+  id SERIAL PRIMARY KEY,
+  type (DEPOSIT/WITHDRAWAL), amount, notes, created_at
 )
 ```
 

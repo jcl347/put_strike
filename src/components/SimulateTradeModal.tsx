@@ -14,10 +14,11 @@ interface TradeData {
   scoreAtEntry?: number;
   stabilityScoreAtEntry?: number;
   ivRankAtEntry?: number;
+  vixAtEntry?: number;
+  marketRegimeAtEntry?: string;
 }
 
 interface SimulateTradeModalProps {
-  /** Pre-filled trade data from a put row */
   prefill?: Partial<TradeData>;
   onClose: () => void;
   onSuccess: () => void;
@@ -27,14 +28,19 @@ export default function SimulateTradeModal({ prefill, onClose, onSuccess }: Simu
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
+  const [quantity, setQuantity] = useState(1);
 
   const symbol = prefill?.symbol ?? "";
   const strikePrice = prefill?.strikePrice ?? 0;
   const expiration = prefill?.expiration ?? "";
   const premium = prefill?.premiumReceived ?? 0;
   const stockPrice = prefill?.stockPriceAtEntry ?? 0;
-  const collateral = strikePrice * 100;
-  const yieldPct = collateral > 0 ? ((premium * 100) / collateral * 100).toFixed(2) : "0";
+  const collateral = strikePrice * 100 * quantity;
+  const yieldPct = collateral > 0 ? ((premium * 100 * quantity) / collateral * 100).toFixed(2) : "0";
+
+  // Tastytrade management targets
+  const profitTarget = premium * 0.5;  // Close at 50% profit
+  const stopLoss = premium * 3;        // Stop at 2x credit (buy back at 3x)
 
   const handleSubmit = async () => {
     setSaving(true);
@@ -55,6 +61,9 @@ export default function SimulateTradeModal({ prefill, onClose, onSuccess }: Simu
           scoreAtEntry: prefill?.scoreAtEntry,
           stabilityScoreAtEntry: prefill?.stabilityScoreAtEntry,
           ivRankAtEntry: prefill?.ivRankAtEntry,
+          vixAtEntry: prefill?.vixAtEntry,
+          marketRegimeAtEntry: prefill?.marketRegimeAtEntry,
+          quantity,
           notes: notes || null,
         }),
       });
@@ -75,7 +84,7 @@ export default function SimulateTradeModal({ prefill, onClose, onSuccess }: Simu
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl"
+        className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
@@ -105,19 +114,9 @@ export default function SimulateTradeModal({ prefill, onClose, onSuccess }: Simu
             <span className="text-gray-400">Premium (per share)</span>
             <span className="text-green-400 font-medium">${premium.toFixed(2)}</span>
           </div>
-          <div className="border-t border-gray-700 pt-2 mt-2">
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-400">Collateral Required</span>
-              <span className="text-white font-medium">${collateral.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-400">Max Gain</span>
-              <span className="text-green-400">${(premium * 100).toFixed(0)} ({yieldPct}%)</span>
-            </div>
-          </div>
           {prefill?.scoreAtEntry != null && (
             <div className="flex justify-between text-sm">
-              <span className="text-gray-400">Score at Entry</span>
+              <span className="text-gray-400">Score</span>
               <span className="text-blue-400">{prefill.scoreAtEntry.toFixed(0)}</span>
             </div>
           )}
@@ -127,6 +126,58 @@ export default function SimulateTradeModal({ prefill, onClose, onSuccess }: Simu
               <span className="text-gray-300">{prefill.deltaAtEntry.toFixed(3)}</span>
             </div>
           )}
+        </div>
+
+        {/* Quantity */}
+        <div className="mb-4">
+          <label className="block text-sm text-gray-400 mb-1">Contracts</label>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setQuantity(Math.max(1, quantity - 1))} className="w-8 h-8 bg-gray-800 border border-gray-700 rounded text-gray-300 hover:bg-gray-700">-</button>
+            <input
+              type="number"
+              min={1}
+              value={quantity}
+              onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+              className="w-16 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-center text-white text-sm focus:outline-none focus:border-blue-500"
+            />
+            <button onClick={() => setQuantity(quantity + 1)} className="w-8 h-8 bg-gray-800 border border-gray-700 rounded text-gray-300 hover:bg-gray-700">+</button>
+            <span className="text-xs text-gray-500 ml-2">x 100 shares each</span>
+          </div>
+        </div>
+
+        {/* Position Summary */}
+        <div className="bg-gray-800/70 rounded-lg p-3 mb-4 space-y-1.5">
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-400">Collateral Required</span>
+            <span className="text-white font-medium">${collateral.toLocaleString()}</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-400">Max Gain</span>
+            <span className="text-green-400">${(premium * 100 * quantity).toFixed(0)} ({yieldPct}%)</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-400">Max Loss</span>
+            <span className="text-red-400">${((strikePrice - premium) * 100 * quantity).toFixed(0)}</span>
+          </div>
+        </div>
+
+        {/* Tastytrade Management Targets */}
+        <div className="bg-blue-900/15 border border-blue-800/30 rounded-lg p-3 mb-4">
+          <div className="text-[10px] text-blue-400 font-medium uppercase tracking-wide mb-1.5">Tastytrade Management Rules</div>
+          <div className="space-y-1 text-xs">
+            <div className="flex justify-between">
+              <span className="text-gray-400">Close at 50% profit</span>
+              <span className="text-green-400">Buy back at ${profitTarget.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-400">Stop at 2x credit loss</span>
+              <span className="text-red-400">Buy back at ${stopLoss.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-400">Manage at 21 DTE</span>
+              <span className="text-yellow-400">Roll or close</span>
+            </div>
+          </div>
         </div>
 
         {/* Notes */}
@@ -159,7 +210,7 @@ export default function SimulateTradeModal({ prefill, onClose, onSuccess }: Simu
             disabled={saving}
             className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-800 disabled:text-green-400 text-white font-medium rounded-lg transition-colors text-sm"
           >
-            {saving ? "Saving..." : "Open Simulated Trade"}
+            {saving ? "Saving..." : `Open Trade (${quantity} contract${quantity > 1 ? "s" : ""})`}
           </button>
         </div>
       </div>
