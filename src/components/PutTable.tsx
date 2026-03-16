@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import SimulateTradeModal from "./SimulateTradeModal";
 
 interface ScoredPut {
   symbol: string;
@@ -28,6 +29,7 @@ interface ScoredPut {
 interface PutTableProps {
   puts: ScoredPut[];
   title?: string;
+  onTradeSimulated?: () => void;
 }
 
 const recColors: Record<string, { bg: string; text: string }> = {
@@ -44,8 +46,9 @@ const recLabels: Record<string, string> = {
   AVOID: "Avoid",
 };
 
-export default function PutTable({ puts, title }: PutTableProps) {
+export default function PutTable({ puts, title, onTradeSimulated }: PutTableProps) {
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
+  const [simulatingPut, setSimulatingPut] = useState<ScoredPut | null>(null);
 
   if (puts.length === 0) {
     return (
@@ -296,7 +299,7 @@ export default function PutTable({ puts, title }: PutTableProps) {
                             <h4 className="text-xs font-medium text-gray-500 uppercase mb-1">
                               Management Rules (tastytrade methodology)
                             </h4>
-                            <div className="flex flex-wrap gap-2 text-xs">
+                            <div className="flex items-center flex-wrap gap-2 text-xs">
                               <span className="px-2 py-1 bg-gray-700/50 rounded text-gray-300">
                                 Close at 50% profit ($
                                 {(((put.bid + put.ask) / 2) * 50).toFixed(0)}{" "}
@@ -310,6 +313,12 @@ export default function PutTable({ puts, title }: PutTableProps) {
                               <span className="px-2 py-1 bg-gray-700/50 rounded text-gray-300">
                                 Roll at 21 DTE if profitable
                               </span>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setSimulatingPut(put); }}
+                                className="ml-auto px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors"
+                              >
+                                Simulate Trade
+                              </button>
                             </div>
                           </div>
                         </div>
@@ -322,6 +331,27 @@ export default function PutTable({ puts, title }: PutTableProps) {
           </tbody>
         </table>
       </div>
+
+      {/* Simulate Trade Modal */}
+      {simulatingPut && (
+        <SimulateTradeModal
+          prefill={{
+            symbol: simulatingPut.symbol,
+            strikePrice: simulatingPut.strikePrice,
+            expiration: simulatingPut.expiration,
+            dteAtEntry: simulatingPut.dte,
+            premiumReceived: (simulatingPut.bid + simulatingPut.ask) / 2,
+            stockPriceAtEntry: simulatingPut.stockPrice,
+            deltaAtEntry: simulatingPut.delta,
+            scoreAtEntry: simulatingPut.score,
+          }}
+          onClose={() => setSimulatingPut(null)}
+          onSuccess={() => {
+            setSimulatingPut(null);
+            onTradeSimulated?.();
+          }}
+        />
+      )}
     </div>
   );
 }

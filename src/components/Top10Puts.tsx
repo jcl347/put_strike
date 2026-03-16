@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { getChecklistSummary, type ChecklistInput, type StockContext } from "@/lib/checklist";
+import SimulateTradeModal from "./SimulateTradeModal";
 
 interface Top10Put {
   symbol: string;
@@ -28,6 +29,7 @@ interface Top10Put {
 
 interface Top10PutsProps {
   puts: Top10Put[];
+  onTradeSimulated?: () => void;
 }
 
 const recColors: Record<string, { bg: string; text: string }> = {
@@ -153,9 +155,10 @@ function CrossComparisonGuide() {
   );
 }
 
-export default function Top10Puts({ puts }: Top10PutsProps) {
+export default function Top10Puts({ puts, onTradeSimulated }: Top10PutsProps) {
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [showGuide, setShowGuide] = useState(false);
+  const [simulatingPut, setSimulatingPut] = useState<Top10Put | null>(null);
 
   // Already deduplicated upstream (1 best per stock, sorted by score)
   const displayPuts = puts.slice(0, 10);
@@ -454,7 +457,7 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
                   </div>
 
                   {/* Management Rules */}
-                  <div className="mt-3 pt-3 border-t border-gray-700/50 flex flex-wrap gap-2 text-xs">
+                  <div className="mt-3 pt-3 border-t border-gray-700/50 flex items-center flex-wrap gap-2 text-xs">
                     <span className="px-2 py-1 bg-gray-700/50 rounded text-gray-300">
                       Close at 50% profit (${(midPrice * 50).toFixed(0)} gain)
                     </span>
@@ -464,6 +467,12 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
                     <span className="px-2 py-1 bg-gray-700/50 rounded text-gray-300">
                       Roll at 21 DTE if profitable
                     </span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setSimulatingPut(put); }}
+                      className="ml-auto px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors"
+                    >
+                      Simulate Trade
+                    </button>
                   </div>
                 </div>
               )}
@@ -471,6 +480,30 @@ export default function Top10Puts({ puts }: Top10PutsProps) {
           );
         })}
       </div>
+
+      {/* Simulate Trade Modal */}
+      {simulatingPut && (
+        <SimulateTradeModal
+          prefill={{
+            symbol: simulatingPut.symbol,
+            companyName: simulatingPut.companyName,
+            strikePrice: simulatingPut.strikePrice,
+            expiration: simulatingPut.expiration,
+            dteAtEntry: simulatingPut.dte,
+            premiumReceived: (simulatingPut.bid + simulatingPut.ask) / 2,
+            stockPriceAtEntry: simulatingPut.stockPrice,
+            deltaAtEntry: simulatingPut.delta,
+            scoreAtEntry: simulatingPut.score,
+            stabilityScoreAtEntry: simulatingPut.stabilityScore,
+            ivRankAtEntry: simulatingPut._checklistInput?.ivRank,
+          }}
+          onClose={() => setSimulatingPut(null)}
+          onSuccess={() => {
+            setSimulatingPut(null);
+            onTradeSimulated?.();
+          }}
+        />
+      )}
     </div>
   );
 }

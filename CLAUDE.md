@@ -24,6 +24,8 @@ PutStrike is a Next.js 15 app (App Router) that optimizes cash-secured put optio
   - Market regime modifier based on VIX
   - Outputs 0-100 score with recommendation (STRONG_SELL / SELL / NEUTRAL / AVOID)
 
+- **`db.ts`** - Neon Postgres serverless connection via `@neondatabase/serverless`. Lazy schema initialization creates `simulated_trades` table on first API request. Auto-detects `DATABASE_URL` (manual) or `POSTGRES_URL` (Vercel auto-injected). Returns null gracefully when unconfigured — builds succeed without database.
+
 - **`yahoo-finance.ts`** - Data provider wrapping yahoo-finance2. Includes:
   - Retry with exponential backoff for rate limiting resilience
   - Batch processing (3 symbols at a time with 1s delays) to avoid 429 errors
@@ -45,6 +47,13 @@ All routes are `force-dynamic` (no caching — live data).
 
 - **`/api/search?q=app`** - Symbol autocomplete search.
 
+- **`/api/trades`** - Simulated trades CRUD (Neon Postgres). Requires `DATABASE_URL`.
+  - `GET /api/trades?status=OPEN|all` - List trades
+  - `POST /api/trades` - Create trade (symbol, strikePrice, expiration, premiumReceived, stockPriceAtEntry, etc.)
+  - `PUT /api/trades/[id]` - Close trade (status, closePrice, stockPriceAtClose → auto-calculates P&L)
+  - `DELETE /api/trades/[id]` - Delete trade
+  - `GET /api/trades/stats` - Aggregate statistics (win rate, cumulative P&L, monthly breakdown, per-symbol breakdown)
+
 ### Frontend (`src/components/`)
 
 Client-side React components with Tailwind CSS (v4). Dark theme only.
@@ -58,7 +67,64 @@ Client-side React components with Tailwind CSS (v4). Dark theme only.
 - `PutTable` - Expandable table of scored puts with trade details
 - `ScreenerResults` - Multi-stock collapsible results view with stability scores
 - `ColabConnect` - iTransformer GPU model connection for Colab inference
+- `SimulateTradeModal` - Modal to create a simulated put trade from any scored put row. Pre-fills all trade parameters.
+- `TradesDashboard` - Full simulation trading analytics with SVG charts:
+  - KPI cards (total P&L, win rate, avg return, open trades, best/worst trade)
+  - Win rate donut chart (SVG)
+  - Cumulative P&L line chart with trade dots (SVG)
+  - Monthly P&L bar chart (SVG)
+  - Per-symbol P&L breakdown with horizontal bars
+  - Score vs outcome analysis (validates scoring model edge)
+  - Trade history list with filter (all/open/closed), close trade modal, delete
 - Data source status indicator (connected/degraded/down)
+
+## Simulation Trading
+
+### Overview
+
+Simulation trading allows paper-trading put sales directly from scored put recommendations, tracking P&L and validating the scoring model's effectiveness over time.
+
+### Database
+
+Uses **Neon** (serverless Postgres) via `@neondatabase/serverless`. Schema is auto-created on first API request.
+
+**Environment variables** (auto-detected, either works):
+- `DATABASE_URL` — manual Neon connection string (`.env.local`)
+- `POSTGRES_URL` — auto-injected by Vercel when you connect a database via the Storage dashboard
+
+### Trade Lifecycle
+
+1. **Open**: User clicks "Simulate Trade" on any scored put → modal pre-fills all parameters → saved to DB
+2. **Close**: User clicks "Close" on an open trade → selects outcome (Expired/Profit/Loss/Assigned) → P&L auto-calculated
+3. **Track**: Dashboard shows cumulative P&L, win rate, monthly performance, per-symbol breakdown, and score-vs-outcome analysis
+
+### P&L Calculation
+
+- **Expired** (worthless): P&L = premium × 100 (full profit)
+- **Closed**: P&L = (premium received − close price) × 100
+- **Assigned**: P&L = premium × 100 − (strike − stock price at close) × 100
+
+### Key Analytics
+
+- **Win Rate**: % of closed trades with positive P&L
+- **Score vs Outcome**: Compares average entry score for winners vs losers — validates the scoring model
+- **Cumulative P&L Chart**: SVG line chart showing equity curve across all closed trades
+- **Monthly P&L**: Bar chart of monthly returns
+- **Per-Symbol Breakdown**: Horizontal bar chart ranked by total P&L per stock
+
+### Schema
+
+```sql
+simulated_trades (
+  id SERIAL PRIMARY KEY,
+  symbol, company_name, strike_price, expiration, dte_at_entry,
+  premium_received, stock_price_at_entry, delta_at_entry,
+  score_at_entry, stability_score_at_entry, iv_rank_at_entry,
+  collateral, status (OPEN/CLOSED_PROFIT/CLOSED_LOSS/ASSIGNED/EXPIRED),
+  close_price, stock_price_at_close, pnl, pnl_percent,
+  closed_at, notes, created_at, updated_at
+)
+```
 
 ## Key Design Decisions
 
