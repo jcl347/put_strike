@@ -330,7 +330,7 @@ export default function Top10Puts({ puts, onTradeSimulated }: Top10PutsProps) {
                 {/* Delta — properly formatted */}
                 <div className="w-16 text-sm hidden md:block">
                   <div className="text-gray-400">
-                    {put.delta < 0 ? "" : "-"}{Math.abs(put.delta).toFixed(2)}
+                    {Math.abs(put.delta).toFixed(2)}
                   </div>
                   <div className="text-gray-600 text-[10px]">delta</div>
                 </div>
