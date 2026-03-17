@@ -41,8 +41,8 @@ PutStrike screens 80+ high-liquidity stocks, scores put selling opportunities us
 │                                                         │
 │  Tier 2: iTransformer (ONNX from HuggingFace, ~100ms)  │
 │  ├── Per-stock models: 90 individually trained          │
-│  ├── 146 features (OHLCV + macro + gamma squeeze +     │
-│  │   sentiment + stock-specific drivers + FRED)         │
+│  ├── 154 features (OHLCV + macro + gamma squeeze +     │
+│  │   sentiment + drivers + tail risk + style rotation)  │
 │  ├── 60d lookback → 60 trading day forecast             │
 │  ├── Cross-variate attention (features as tokens)       │
 │  └── Concordance validation vs scoring model            │
@@ -63,7 +63,8 @@ PutStrike screens 80+ high-liquidity stocks, scores put selling opportunities us
 │  ├── yahoo-finance2 (quotes, options, OHLCV)            │
 │  ├── Macro: ^VIX, ^VIX3M, ^TNX, DX-Y.NYB, GC=F, CL=F │
 │  ├── Breadth: QQQ, IWM, ^SOX, XBI + 13 driver ETFs    │
-│  ├── FRED API: 8 macro series (credit, yields, stress) │
+│  ├── Tail risk: ^SKEW + Style: IWF, IWD, XLY, XLP     │
+│  ├── FRED API: 10 macro series (rates, FX, credit)     │
 │  ├── HuggingFace Hub (ONNX model download + cache)     │
 │  └── Neon Postgres (simulation trading persistence)    │
 └─────────────────────────────────────────────────────────┘
@@ -83,13 +84,13 @@ PutStrike screens 80+ high-liquidity stocks, scores put selling opportunities us
 **Training approach:**
 - **Per-stock models** — one iTransformer trained per stock on that stock's data
 - 10 years of daily data per stock → ~2,500 sliding window samples each
-- 146 features: OHLCV technicals + macro + gamma squeeze proxies + sentiment + stock-specific drivers + FRED
+- 154 features: OHLCV technicals + macro + gamma squeeze proxies + sentiment + stock-specific drivers + FRED + tail risk + style rotation
 - Walk-forward validation: 70/15/15 chronological split (no look-ahead bias)
 - HuberLoss(delta=0.02) — robust to earnings/event return outliers
 - iTransformer architecture (ICLR 2024): features as tokens, cross-variate multi-head attention
 - Feature importance analysis via permutation importance after training
 
-### Feature Categories (146 total)
+### Feature Categories (154 total)
 
 | Category | Count | Description |
 |----------|-------|-------------|
@@ -106,10 +107,15 @@ PutStrike screens 80+ high-liquidity stocks, scores put selling opportunities us
 | **Sentiment** | **4** | Realized/implied vol ratio, VIX-SPY correlation, credit momentum, fear composite |
 | **Stock Drivers** | **4** | Per-company primary/secondary driving asset returns & correlations (90 unique mappings) |
 | **FRED Extended** | **2** | Financial Stress Index, 10Y-3M yield spread |
+| **FRED Rates** | **2** | Federal Funds Rate level, 20d change (monetary policy stance) |
+| **FRED FX** | **2** | JPY/USD 20d change, JPY/USD z-score (carry trade proxy) |
+| **Tail Risk** | **2** | CBOE SKEW level, SKEW 20d z-score (options tail risk pricing) |
+| **Style Rotation** | **1** | IWF vs IWD 20d return spread (value/growth rotation) |
+| **Risk Appetite** | **1** | XLY vs XLP 20d return spread (consumer disc. vs staples) |
 
 ### Additional Data Sources
 
-Beyond per-stock OHLCV, the model ingests 28+ data tickers (all free via Yahoo Finance + FRED API):
+Beyond per-stock OHLCV, the model ingests 33+ data tickers (all free via Yahoo Finance + FRED API):
 
 | Ticker | Description | Signal |
 |--------|-------------|--------|
@@ -122,6 +128,11 @@ Beyond per-stock OHLCV, the model ingests 28+ data tickers (all free via Yahoo F
 | HYG, TLT | Credit & Treasury ETFs | Risk appetite, flight to safety |
 | IGV, HACK, KRE, ITA, XOP, IBB, XHB, XRT, LIT, etc. | Stock-specific driver ETFs | Per-company business drivers |
 | STLFSI4, T10Y3M | FRED: Financial Stress, yield spread | Recession signal, systemic risk |
+| DFF | FRED: Federal Funds Rate | Monetary policy stance, bank NIM driver |
+| DEXJPUS | FRED: JPY/USD exchange rate | Carry trade unwinding proxy, risk-off signal |
+| ^SKEW | CBOE SKEW Index | Options tail risk pricing, crash protection cost |
+| IWF, IWD | Russell 1000 Growth/Value ETFs | Value/growth style rotation regime |
+| XLY, XLP | Consumer Disc./Staples SPDRs | Risk appetite indicator |
 
 ### Hypotheses
 
@@ -131,6 +142,11 @@ Beyond per-stock OHLCV, the model ingests 28+ data tickers (all free via Yahoo F
 4. **Gamma squeeze proxies detect mechanical amplification**: Volume/range/gap features improve short-term accuracy for high-options-volume stocks
 5. **Stock-specific drivers improve per-stock predictions**: Business-relevant signals (SOX for chips, KRE for banks, etc.) outperform generic features
 6. **Market breadth + sentiment improve regime detection**: Cross-market rotation and fear signals improve predictions during risk-off events
+7. **Monetary policy features improve rate-sensitive stocks**: DFF features help bank stocks (directly sets NIM) and high-duration growth stocks
+8. **Carry trade proxy detects risk-off events**: JPY/USD change detects yen carry trade unwinding (caused Aug 2024 crash) as leading indicator
+9. **SKEW captures tail risk not in VIX**: Options tail risk pricing helps high-beta stocks (semis, fintech, crypto-adjacent)
+10. **Value/growth rotation improves style-sensitive stocks**: IWF-IWD spread captures regime shifts between growth and value investing styles
+11. **Risk appetite indicator helps consumer sector**: XLY-XLP spread captures institutional risk-on/risk-off positioning for consumer stocks
 
 ## Quick Start
 

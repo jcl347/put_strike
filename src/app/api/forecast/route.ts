@@ -17,7 +17,7 @@ export const maxDuration = 30;
 
 /**
  * Forecast feature endpoint.
- * Computes the 146 iTransformer features from OHLCV + macro + sector/credit +
+ * Computes the 154 iTransformer features from OHLCV + macro + sector/credit +
  * gamma squeeze + sentiment + stock-specific driver data, normalizes them using
  * per-stock stats from HuggingFace model config, and returns a ready-to-use
  * feature matrix for client-side ONNX inference.
@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
     const stockDates = ohlcv.map(d => d.date);
     const macroData = alignMacroToStockDates(rawMacro, stockDates, fredData);
 
-    // Compute 126 features for all available days
+    // Compute 154 features for all available days
     const rawFeatures = computeITransformerFeatures(ohlcv, macroData);
 
     // Fetch normalization stats from HuggingFace model config
@@ -163,6 +163,12 @@ interface RawMacroData {
   xbi?: Record<string, number>;
   stockDriver1?: Record<string, number>;
   stockDriver2?: Record<string, number>;
+  // v9.0: tail risk & style rotation
+  skew?: Record<string, number>;
+  iwf?: Record<string, number>;
+  iwd?: Record<string, number>;
+  xly?: Record<string, number>;
+  xlp?: Record<string, number>;
 }
 
 /**
@@ -202,6 +208,12 @@ async function fetchMacroDataWithDates(
     { symbol: "IWM", key: "iwm" },
     { symbol: "^SOX", key: "sox" },
     { symbol: "XBI", key: "xbi" },
+    // v9.0: tail risk & style rotation tickers
+    { symbol: "^SKEW", key: "skew" },
+    { symbol: "IWF", key: "iwf" },
+    { symbol: "IWD", key: "iwd" },
+    { symbol: "XLY", key: "xly" },
+    { symbol: "XLP", key: "xlp" },
   ];
 
   // Add per-stock sector ETF if mapped (avoid duplicates with SPY)
@@ -327,6 +339,12 @@ function alignMacroToStockDates(
   aligned.xbi = forwardFillAlign(rawMacro.xbi);
   aligned.stockDriver1 = forwardFillAlign(rawMacro.stockDriver1);
   aligned.stockDriver2 = forwardFillAlign(rawMacro.stockDriver2);
+  // v9.0: tail risk & style rotation
+  aligned.skew = forwardFillAlign(rawMacro.skew);
+  aligned.iwf = forwardFillAlign(rawMacro.iwf);
+  aligned.iwd = forwardFillAlign(rawMacro.iwd);
+  aligned.xly = forwardFillAlign(rawMacro.xly);
+  aligned.xlp = forwardFillAlign(rawMacro.xlp);
 
   // FRED macro data alignment
   if (fredData) {
@@ -338,6 +356,8 @@ function alignMacroToStockDates(
     aligned.fredConsumerSentiment = forwardFillAlign(fredData.consumerSentiment);
     aligned.fredFinancialStress = forwardFillAlign(fredData.financialStress);
     aligned.fredT10y3mSpread = forwardFillAlign(fredData.t10y3mSpread);
+    aligned.fredFedFundsRate = forwardFillAlign(fredData.fedFundsRate);
+    aligned.fredJpyUsd = forwardFillAlign(fredData.jpyUsd);
   }
 
   return aligned;

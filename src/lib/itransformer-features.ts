@@ -1,11 +1,11 @@
 /**
  * iTransformer Feature Engineering — Server-Side
  *
- * Computes the exact 146 features used to train the iTransformer model.
+ * Computes the exact 154 features used to train the iTransformer model.
  * Must stay in sync with compute_features() in colab/train_itransformer.ipynb.
  *
  * Input: OHLCV daily data (need 260+ days for warmup)
- * Output: (numDays, 146) feature matrix for the available days
+ * Output: (numDays, 154) feature matrix for the available days
  *
  * Features 0-82: Original technicals + macro (SMA/EMA, RSI, MACD, BB, ATR,
  *   volume, stochastic, ROC, CCI, Aroon, returns, volatility, moments,
@@ -30,6 +30,11 @@
  * Features 140-143: Stock-specific drivers — per-company primary/secondary
  *   driving asset returns and correlations
  * Features 144-145: FRED extended — financial stress index, 10Y-3M yield spread
+ * Features 146-147: FRED rates — fed funds rate, fed funds rate change
+ * Features 148-149: FRED FX — JPY/USD change, JPY/USD z-score
+ * Features 150-151: CBOE SKEW — tail risk level, tail risk z-score
+ * Features 152: Value/growth rotation — IWF vs IWD 20d spread
+ * Features 153: Risk appetite — XLY vs XLP 20d spread
  */
 
 export const FEATURE_NAMES = [
@@ -96,6 +101,12 @@ export const FEATURE_NAMES = [
   "stock_driver_2_return_20d", "stock_driver_2_corr_20d",
   // FRED extended (144-145)
   "fred_financial_stress", "fred_t10y3m_spread",
+  // FRED rates & FX (146-149)
+  "fed_funds_rate", "fed_funds_rate_change_20d",
+  "jpy_usd_change_20d", "jpy_usd_zscore_20",
+  // Tail risk & style rotation (150-153)
+  "skew_level", "skew_zscore_20",
+  "value_growth_spread_20d", "risk_appetite_ratio_20d",
 ] as const;
 
 export interface OHLCV {
@@ -139,6 +150,14 @@ export interface MacroData {
   fredConsumerSentiment?: number[]; // UMCSENT UMich consumer sentiment
   fredFinancialStress?: number[];   // STLFSI4 St. Louis Fed Financial Stress Index
   fredT10y3mSpread?: number[];     // T10Y3M 10Y-3M yield spread
+  fredFedFundsRate?: number[];     // DFF Daily Federal Funds Effective Rate
+  fredJpyUsd?: number[];           // DEXJPUS JPY/USD exchange rate
+  // Tail risk & style rotation (v9.0)
+  skew?: number[];        // ^SKEW CBOE SKEW Index (tail risk)
+  iwf?: number[];         // IWF Russell 1000 Growth ETF
+  iwd?: number[];         // IWD Russell 1000 Value ETF
+  xly?: number[];         // XLY Consumer Discretionary SPDR
+  xlp?: number[];         // XLP Consumer Staples SPDR
 }
 
 /**
@@ -615,7 +634,7 @@ export function computeITransformerFeatures(
   const result: number[][] = [];
 
   for (let i = 0; i < n; i++) {
-    const row: number[] = new Array(146).fill(0);
+    const row: number[] = new Array(154).fill(0);
     const c = close[i];
     const dt = dates[i];
 
@@ -1295,8 +1314,62 @@ export function computeITransformerFeatures(
       row[145] = macro.fredT10y3mSpread[i] ?? 0;
     }
 
+    // ── 146-147: FRED Rates — Fed Funds Rate ──
+    if (macro?.fredFedFundsRate) {
+      row[146] = macro.fredFedFundsRate[i] ?? 0;
+      if (i >= 20 && macro.fredFedFundsRate[i - 20] != null) {
+        row[147] = (macro.fredFedFundsRate[i] ?? 0) - (macro.fredFedFundsRate[i - 20] ?? 0);
+      }
+    }
+
+    // ── 148-149: FRED FX — JPY/USD ──
+    if (macro?.fredJpyUsd && macro.fredJpyUsd[i]) {
+      if (i >= 20 && macro.fredJpyUsd[i - 20]) {
+        row[148] = (macro.fredJpyUsd[i] - macro.fredJpyUsd[i - 20]) / macro.fredJpyUsd[i - 20];
+      }
+      // Z-score of JPY/USD over 20d
+      if (i >= 19) {
+        const jpySlice = macro.fredJpyUsd.slice(Math.max(0, i - 19), i + 1).filter(v => v > 0);
+        if (jpySlice.length >= 5) {
+          const mean = jpySlice.reduce((a, b) => a + b, 0) / jpySlice.length;
+          const stdDev = Math.sqrt(jpySlice.reduce((a, b) => a + (b - mean) ** 2, 0) / jpySlice.length) + 1e-10;
+          row[149] = (macro.fredJpyUsd[i] - mean) / stdDev;
+        }
+      }
+    }
+
+    // ── 150-151: CBOE SKEW Index — tail risk ──
+    if (macro?.skew && macro.skew[i]) {
+      row[150] = macro.skew[i];
+      // Z-score of SKEW over 20d
+      if (i >= 19) {
+        const skewSlice = macro.skew.slice(Math.max(0, i - 19), i + 1).filter(v => v > 0);
+        if (skewSlice.length >= 5) {
+          const mean = skewSlice.reduce((a, b) => a + b, 0) / skewSlice.length;
+          const stdDev = Math.sqrt(skewSlice.reduce((a, b) => a + (b - mean) ** 2, 0) / skewSlice.length) + 1e-10;
+          row[151] = (macro.skew[i] - mean) / stdDev;
+        }
+      }
+    }
+
+    // ── 152: Value/Growth Rotation — IWF vs IWD spread ──
+    if (macro?.iwf && macro?.iwd && i >= 20 &&
+        macro.iwf[i] && macro.iwf[i - 20] && macro.iwd[i] && macro.iwd[i - 20]) {
+      const iwfReturn = Math.log(macro.iwf[i] / macro.iwf[i - 20]);
+      const iwdReturn = Math.log(macro.iwd[i] / macro.iwd[i - 20]);
+      row[152] = iwfReturn - iwdReturn; // positive = growth outperforming value
+    }
+
+    // ── 153: Risk Appetite — XLY vs XLP spread ──
+    if (macro?.xly && macro?.xlp && i >= 20 &&
+        macro.xly[i] && macro.xly[i - 20] && macro.xlp[i] && macro.xlp[i - 20]) {
+      const xlyReturn = Math.log(macro.xly[i] / macro.xly[i - 20]);
+      const xlpReturn = Math.log(macro.xlp[i] / macro.xlp[i - 20]);
+      row[153] = xlyReturn - xlpReturn; // positive = risk-on, negative = risk-off
+    }
+
     // Replace NaN/Infinity
-    for (let f = 0; f < 146; f++) {
+    for (let f = 0; f < 154; f++) {
       if (!isFinite(row[f])) row[f] = 0;
     }
 

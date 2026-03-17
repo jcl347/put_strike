@@ -11,6 +11,8 @@
  *   - UMCSENT: University of Michigan Consumer Sentiment
  *   - STLFSI4: St. Louis Fed Financial Stress Index (weekly, replaced STLFSI2)
  *   - T10Y3M: 10-Year minus 3-Month Treasury spread (recession signal)
+ *   - DFF: Daily Federal Funds Effective Rate (monetary policy stance)
+ *   - DEXJPUS: JPY/USD Exchange Rate (carry trade proxy)
  *
  * Requires FRED_API_KEY environment variable.
  * Rate limit: 120 requests/minute (free tier).
@@ -32,6 +34,8 @@ export interface FredMacroData {
   consumerSentiment?: Record<string, number>; // UMCSENT
   financialStress?: Record<string, number>;   // STLFSI4
   t10y3mSpread?: Record<string, number>;     // T10Y3M
+  fedFundsRate?: Record<string, number>;     // DFF
+  jpyUsd?: Record<string, number>;           // DEXJPUS
 }
 
 // Cache to avoid hammering FRED API on every request
@@ -48,6 +52,8 @@ const FRED_SERIES = [
   { id: "UMCSENT", key: "consumerSentiment" },
   { id: "STLFSI4", key: "financialStress" },
   { id: "T10Y3M", key: "t10y3mSpread" },
+  { id: "DFF", key: "fedFundsRate" },
+  { id: "DEXJPUS", key: "jpyUsd" },
 ] as const;
 
 /**

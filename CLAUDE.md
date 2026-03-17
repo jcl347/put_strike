@@ -277,7 +277,7 @@ Standard Transformers treat time steps as tokens. iTransformer **inverts** this 
 
 Config: `d_model=128, n_heads=8, n_layers=3, d_ff=256, dropout=0.15`
 
-### Feature Engineering (146 features)
+### Feature Engineering (154 features)
 
 Features computed in both Python (notebook) and TypeScript (website) — must stay synchronized:
 
@@ -312,6 +312,11 @@ Features computed in both Python (notebook) and TypeScript (website) — must st
 | **Sentiment Proxies** | 4 | Realized/implied vol ratio, VIX-SPY 10d correlation, credit momentum 10d, fear composite | OHLCV + macro |
 | **Stock-Specific Drivers** | 4 | Per-company primary/secondary driver returns and correlations | Per-stock ETF/index mapping |
 | **FRED Extended** | 2 | St. Louis Fed Financial Stress Index, 10Y-3M Treasury spread | FRED API |
+| **FRED Rates** | 2 | Federal Funds Rate level, 20d change (monetary policy stance) | FRED API (DFF) |
+| **FRED FX** | 2 | JPY/USD 20d change, JPY/USD 20d z-score (carry trade proxy) | FRED API (DEXJPUS) |
+| **Tail Risk** | 2 | CBOE SKEW level, SKEW 20d z-score (options tail risk pricing) | ^SKEW (Yahoo) |
+| **Style Rotation** | 1 | IWF vs IWD 20d return spread (value/growth rotation regime) | IWF, IWD (Yahoo) |
+| **Risk Appetite** | 1 | XLY vs XLP 20d return spread (consumer discretionary vs staples) | XLY, XLP (Yahoo) |
 
 **Macro data sources:**
 - `^VIX`, `^VIX3M` — VIX term structure (contango/backwardation signals risk appetite)
@@ -329,6 +334,11 @@ Features computed in both Python (notebook) and TypeScript (website) — must st
 - `QQQ` — Invesco QQQ Trust (NASDAQ 100, tech rotation signal)
 - `IWM` — iShares Russell 2000 ETF (small cap rotation, risk appetite breadth)
 - `^SOX` — Philadelphia Semiconductor Index (chip cycle indicator)
+- `^SKEW` — CBOE SKEW Index (options tail risk pricing; high SKEW = expensive crash protection, backtested from 1990)
+- `IWF` — iShares Russell 1000 Growth ETF (growth style benchmark for value/growth rotation)
+- `IWD` — iShares Russell 1000 Value ETF (value style benchmark for value/growth rotation)
+- `XLY` — Consumer Discretionary Select Sector SPDR (risk-on consumer spending)
+- `XLP` — Consumer Staples Select Sector SPDR (risk-off defensive spending)
 
 **Stock-specific driver tickers** (per-stock mapped via `STOCK_SPECIFIC_DRIVERS`):
 - `IGV` — iShares Expanded Tech-Software ETF (software company driver)
@@ -354,6 +364,8 @@ Features computed in both Python (notebook) and TypeScript (website) — must st
 - `UMCSENT` — University of Michigan Consumer Sentiment, monthly (consumer confidence, 20d pct change)
 - `STLFSI4` — St. Louis Fed Financial Stress Index, weekly (replaced STLFSI2; composite of 18 financial indicators; 0 = normal, positive = above-average stress)
 - `T10Y3M` — 10-Year minus 3-Month Treasury spread (alternative recession indicator, more sensitive than 10Y-2Y; inversion preceded every US recession since 1970)
+- `DFF` — Daily Federal Funds Effective Rate (actual overnight rate; captures monetary policy stance; directly impacts bank NIM and rate-sensitive growth stocks)
+- `DEXJPUS` — JPY/USD Exchange Rate, daily (yen carry trade proxy; carry trade unwinding caused Aug 2024 market crash; high JPY strengthening = risk-off)
 
 **Per-stock mappings:**
 - `SECTOR_ETF_MAP` — Maps each stock to its GICS sector ETF (XLK, XLF, XLV, XLE, XLI, XLY, XLP, XLC). Sector-relative features capture whether a stock is outperforming/underperforming its peers, independent of broad market moves.
@@ -417,6 +429,47 @@ iTransformer predictions validate the scoring model's recommendations:
 8. **H8: Gamma squeeze proxies detect mechanical price amplification** — The 6 v8.0 gamma squeeze features (volume acceleration, price-volume momentum, range expansion, gap acceleration, squeeze breakout, volume-price impact) should improve short-term (7-14d) directional accuracy by detecting when market maker hedging flows are amplifying price moves, especially for high-options-volume stocks (TSLA, NVDA, AMD, SPY).
 9. **H9: Stock-specific drivers improve per-stock predictions** — The 4 v8.0 stock-specific driver features should improve predictions for stocks with strong sector/industry dependencies by providing business-relevant signals. Test by comparing per-stock accuracy with vs without driver features. Stocks with strongest expected improvement: energy (XOP correlation), banks (KRE + rates), semis (SOX), defense (ITA).
 10. **H10: Market breadth + sentiment features improve regime detection** — The 8 v8.0 market breadth and sentiment features (tech rotation, small cap rotation, SOX/XBI momentum, vol risk premium, fear composite) should improve predictions during style rotation and risk-off events by providing cross-market context that single-stock OHLCV misses.
+11. **H11: Monetary policy features improve rate-sensitive stocks** — The 2 v9.0 DFF features (fed funds rate level and 20d change) should improve predictions for bank stocks (JPM, BAC, WFC, GS, MS, C, SCHW) and rate-sensitive growth stocks (MSFT, ADBE, NOW, CRM) by capturing actual overnight rate policy stance rather than just market-implied rates.
+12. **H12: Carry trade proxy improves risk-off event detection** — The 2 v9.0 DEXJPUS features (JPY/USD change and z-score) should improve predictions during carry trade unwinding events by detecting yen strengthening as a leading indicator. The Aug 2024 market crash was driven by yen carry trade unwinding, which VIX-based features detected too late.
+13. **H13: SKEW tail risk captures crash protection pricing** — The 2 v9.0 CBOE SKEW features should improve predictions for high-beta stocks (semis, fintech, crypto-adjacent) by detecting when options market participants are pricing in extreme tail risk, which VIX (at-the-money IV) does not capture.
+14. **H14: Value/growth rotation regime improves style-sensitive predictions** — The v9.0 IWF-IWD spread feature should improve predictions during style rotation periods, particularly for growth stocks (tech, software) during value rotations and vice versa.
+15. **H15: Risk appetite indicator improves consumer/defensive predictions** — The v9.0 XLY-XLP spread feature should improve predictions for consumer discretionary (HD, LOW, NKE, SBUX, TGT) and consumer staples (PG, KO, PEP, COST, WMT) stocks by capturing institutional risk appetite shifts.
+
+### Per-Stock Dataset Analysis (v9.0)
+
+Systematic analysis of how v9.0 universal features map to stock-specific prediction improvement. Each feature was evaluated for orthogonality (does it add signal not already captured?) and expected impact by stock category.
+
+| Stock Category | Stocks | DFF (Fed Funds) | DEXJPUS (JPY) | ^SKEW (Tail Risk) | IWF/IWD (Style) | XLY/XLP (Risk) |
+|----------------|--------|-----------------|---------------|-------------------|-----------------|----------------|
+| **Semiconductors** | NVDA, AMD, INTC, AVGO, QCOM, TXN, AMAT, MU, LRCX, KLAC, SNPS, CDNS | Moderate — discount rate on high-duration growth | HIGH — carry trade unwinding hits high-beta growth hardest | HIGH — high-beta, tail risk repricing matters | HIGH — growth stocks, style rotation directly impacts | Moderate |
+| **Software** | MSFT, CRM, ORCL, ADBE, NOW, CSCO, IBM | HIGH — rate-sensitive growth (long duration) | Moderate — carry trade impact | HIGH — growth stocks sensitive to tail risk | HIGH — growth stocks | Moderate |
+| **Banks** | JPM, BAC, WFC, GS, MS, C, SCHW | HIGHEST — overnight rate directly sets net interest margin | Moderate — global banking exposure | Moderate — financial tail risk | HIGH — banks are value stocks | Moderate |
+| **Healthcare/Pharma** | JNJ, UNH, LLY, PFE, ABBV, MRK, TMO, ABT, DHR, BMY, AMGN | Low-Moderate | Low — mostly domestic | Moderate — defensive, benefits from tail risk flow | Moderate — mixed value/growth | Low |
+| **Consumer Disc.** | AMZN, MCD, NKE, SBUX, TGT, HD, LOW, ABNB, UBER | Moderate — consumer spending is rate-sensitive | Low — mostly domestic | Moderate | Moderate | HIGHEST — directly measures consumer spending rotation |
+| **Consumer Staples** | PG, KO, PEP, COST, WMT | Low | Low | Low-Moderate — defensive | Moderate | HIGHEST — XLP is their sector; inversely benefits from risk-off |
+| **Energy** | XOM, CVX, COP, SLB, EOG | Moderate — capex is rate-sensitive | Moderate — dollar strength affects oil | Low-Moderate | Moderate — value stocks | Low |
+| **Industrials** | CAT, DE, HON, UNP, RTX, BA, GE, LMT, MMM | HIGH — capex-sensitive | Moderate — global exposure | Moderate | Moderate — cyclical value | Moderate |
+| **Fintech/Crypto** | PYPL, SQ, COIN | HIGH — rate-sensitive growth | Moderate — risk-off impact | HIGH — high-beta speculative | HIGH — growth stocks | Moderate |
+| **Communication** | GOOGL, META, NFLX, DIS | Moderate | Moderate | HIGH — growth stocks | HIGH — growth stocks | Moderate |
+| **EV** | TSLA | Moderate | HIGH — carry trade unwinding | HIGH — highest beta in universe | HIGH — growth stock | Moderate |
+| **ETFs** | SPY, QQQ, IWM, DIA, XLF, XLE, XLK, XLV, XBI | All features contribute — ETFs aggregate individual stock sensitivities | | | | |
+
+**Datasets Researched and Rejected:**
+
+| Dataset | Reason for Rejection |
+|---------|---------------------|
+| CBOE Equity Put/Call Ratio (equitypc.csv) | CSV files on cdn.cboe.com are **stale** — data ends mid-2016. Not updated. |
+| AAII Investor Sentiment Survey | Historical data requires paid AAII membership. Not freely available. |
+| FINRA Margin Debt Statistics | Monthly frequency with 6-7 week lag. No API. Too stale for daily prediction. |
+| Yahoo Finance Earnings Dates | Only returns last 4 quarters of history. Insufficient for 10-year training. |
+| Monthly FRED (CPI, UNRATE, M2SL, INDPRO) | Monthly updates mean 20+ days of stale forward-filled data. Too low frequency for daily prediction. |
+| CFTC Commitment of Traders (COT) | Weekly frequency, complex CFTC API parsing, slow-moving signal. Marginal value vs implementation complexity. |
+| Fama-French Factors (Kenneth French Library) | Data inside zip archives requiring custom parsing in both Python and TypeScript. Used ETF proxies (IWF/IWD) instead for value/growth signal with simpler implementation. |
+| CBOE ^PUT / ^BXM Strategy Indices | Available on Yahoo Finance but highly correlated with SPY. Marginal orthogonal signal. |
+| Currency Pairs (EUR/USD, GBP/USD) | DXY already captures most dollar strength signal. EUR/USD is ~58% of DXY weight. Low marginal value. |
+| Short Interest (FINRA) | Bi-monthly release, significant lag, not available programmatically for 10 years. |
+| Social Media Sentiment | No free dataset with 10-year daily history exists. |
+| Google Trends | `pytrends` library is fragile, frequently blocked. Data is weekly. Not reliable for production training. |
 
 ### Modifying the ML Pipeline
 
