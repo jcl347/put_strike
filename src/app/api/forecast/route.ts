@@ -256,19 +256,29 @@ async function fetchMacroDataWithDates(
 
   const results = await Promise.allSettled(
     tickers.map(async ({ symbol, key }) => {
-      const history: any = await yahooFinance.chart(symbol, {
-        period1: startDate,
-        period2: endDate,
-        interval: "1d",
-      });
-      const dateMap: Record<string, number> = {};
-      for (const q of (history.quotes ?? [])) {
-        if (q.close > 0) {
-          const dateStr = new Date(q.date).toISOString().split("T")[0];
-          dateMap[dateStr] = q.close;
+      // Retry up to 3 times for flaky tickers (DX-Y.NYB, ^VIX9D, etc.)
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const history: any = await yahooFinance.chart(symbol, {
+            period1: startDate,
+            period2: endDate,
+            interval: "1d",
+          });
+          const dateMap: Record<string, number> = {};
+          for (const q of (history.quotes ?? [])) {
+            if (q.close > 0) {
+              const dateStr = new Date(q.date).toISOString().split("T")[0];
+              dateMap[dateStr] = q.close;
+            }
+          }
+          if (Object.keys(dateMap).length > 0) {
+            return { key, dateMap };
+          }
+        } catch {
+          if (attempt < 2) await new Promise(r => setTimeout(r, 1000));
         }
       }
-      return { key, dateMap };
+      return { key, dateMap: {} };
     })
   );
 
