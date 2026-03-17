@@ -7,6 +7,7 @@ interface ModelInfo {
   numFeatures?: number;
   parameters?: number;
   dirAcc30d?: number;
+  dirAcc60d?: number;
   onnxSizeMb?: number;
   numStocks?: number;
   numPerStockModels?: number;
@@ -44,6 +45,7 @@ export default function HFModelStatus() {
           numFeatures: config.num_features,
           parameters: config.architecture?.parameters,
           dirAcc30d: config.test_metrics?.dir_acc_30d,
+          dirAcc60d: config.test_metrics?.dir_acc_60d,
           onnxSizeMb: config.onnx_size_mb,
           numStocks: config.training?.num_stocks,
           numPerStockModels: numPerStock,
@@ -91,6 +93,7 @@ export default function HFModelStatus() {
                   </span>
                 )}
                 {info.dirAcc30d && <span>{info.dirAcc30d.toFixed(1)}% dir. accuracy (30d)</span>}
+                {info.dirAcc60d && <span>{info.dirAcc60d.toFixed(1)}% dir. accuracy (60d)</span>}
                 {info.numStocks && <span>Universal: {info.numStocks} stocks</span>}
                 {info.numPerStockModels ? (
                   <span>Per-stock: {info.numPerStockModels} models</span>
