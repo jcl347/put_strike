@@ -169,9 +169,24 @@ export default function StockForecast({
         })}
       </div>
 
-      {/* Concordance note */}
-      <div className="mt-2 text-[10px] text-gray-600 text-right">
-        ICLR 2024 &middot; 60d lookback &middot; ONNX
+      {/* Model accuracy & concordance note */}
+      <div className="mt-2 flex items-center justify-between">
+        {forecast.metadata?.test_metrics && (
+          <div className="flex gap-2 text-[10px] text-gray-500">
+            {forecast.metadata.test_metrics.dir_acc_7d != null && (
+              <span>7d acc: {forecast.metadata.test_metrics.dir_acc_7d.toFixed(1)}%</span>
+            )}
+            {forecast.metadata.test_metrics.dir_acc_30d != null && (
+              <span>30d acc: {forecast.metadata.test_metrics.dir_acc_30d.toFixed(1)}%</span>
+            )}
+            {forecast.metadata.test_metrics.dir_acc_60d != null && (
+              <span>60d acc: {forecast.metadata.test_metrics.dir_acc_60d.toFixed(1)}%</span>
+            )}
+          </div>
+        )}
+        <div className="text-[10px] text-gray-600 text-right">
+          ICLR 2024 &middot; 60d lookback &middot; ONNX
+        </div>
       </div>
     </div>
   );
