@@ -1,11 +1,11 @@
 /**
  * iTransformer Feature Engineering — Server-Side
  *
- * Computes the exact 126 features used to train the iTransformer model.
+ * Computes the exact 154 features used to train the iTransformer model.
  * Must stay in sync with compute_features() in colab/train_itransformer.ipynb.
  *
  * Input: OHLCV daily data (need 260+ days for warmup)
- * Output: (numDays, 126) feature matrix for the available days
+ * Output: (numDays, 154) feature matrix for the available days
  *
  * Features 0-82: Original technicals + macro (SMA/EMA, RSI, MACD, BB, ATR,
  *   volume, stochastic, ROC, CCI, Aroon, returns, volatility, moments,
@@ -21,6 +21,20 @@
  *   industry commodity sensitivity, copper/gold ratio, BTC sentiment
  * Features 120-125: FRED macro features — HY credit spread, yield curve,
  *   breakeven inflation, 2Y Treasury, jobless claims, consumer sentiment
+ * Features 126-131: Gamma squeeze proxies — volume acceleration, price-volume
+ *   momentum, range expansion, gap acceleration, squeeze breakout, vol-price impact
+ * Features 132-135: Market breadth & rotation — tech rotation, small cap rotation,
+ *   semiconductor momentum, biotech momentum
+ * Features 136-139: Sentiment proxies — realized/implied vol ratio, VIX-SPY
+ *   short correlation, credit momentum, fear composite
+ * Features 140-143: Stock-specific drivers — per-company primary/secondary
+ *   driving asset returns and correlations
+ * Features 144-145: FRED extended — financial stress index, 10Y-3M yield spread
+ * Features 146-147: FRED rates — fed funds rate, fed funds rate change
+ * Features 148-149: FRED FX — JPY/USD change, JPY/USD z-score
+ * Features 150-151: CBOE SKEW — tail risk level, tail risk z-score
+ * Features 152: Value/growth rotation — IWF vs IWD 20d spread
+ * Features 153: Risk appetite — XLY vs XLP 20d spread
  */
 
 export const FEATURE_NAMES = [
@@ -74,6 +88,25 @@ export const FEATURE_NAMES = [
   // FRED macro features (120-125)
   "fred_hy_spread", "fred_yield_curve", "fred_breakeven_inflation",
   "fred_2y_yield", "fred_jobless_claims_zscore", "fred_consumer_sentiment_change",
+  // Gamma squeeze proxies (126-131)
+  "volume_acceleration_3_10", "price_volume_momentum_5d", "range_expansion_ratio",
+  "gap_acceleration_10_20", "squeeze_breakout_signal", "volume_price_impact_1d",
+  // Market breadth & rotation (132-135)
+  "tech_rotation_20d", "small_cap_rotation_20d", "sox_momentum_20d", "xbi_momentum_20d",
+  // Sentiment proxies (136-139)
+  "realized_implied_vol_ratio", "vix_spy_short_corr_10d",
+  "credit_momentum_10d", "fear_composite",
+  // Stock-specific drivers (140-143)
+  "stock_driver_1_return_20d", "stock_driver_1_corr_20d",
+  "stock_driver_2_return_20d", "stock_driver_2_corr_20d",
+  // FRED extended (144-145)
+  "fred_financial_stress", "fred_t10y3m_spread",
+  // FRED rates & FX (146-149)
+  "fed_funds_rate", "fed_funds_rate_change_20d",
+  "jpy_usd_change_20d", "jpy_usd_zscore_20",
+  // Tail risk & style rotation (150-153)
+  "skew_level", "skew_zscore_20",
+  "value_growth_spread_20d", "risk_appetite_ratio_20d",
 ] as const;
 
 export interface OHLCV {
@@ -100,6 +133,14 @@ export interface MacroData {
   industryCommodity?: number[];  // Industry-specific commodity (per-stock mapped)
   copper?: number[];    // HG=F copper futures
   btc?: number[];       // BTC-USD bitcoin
+  // Market breadth (v8.0)
+  qqq?: number[];       // QQQ NASDAQ 100 ETF (tech rotation)
+  iwm?: number[];       // IWM Russell 2000 ETF (small cap rotation)
+  sox?: number[];       // ^SOX Philadelphia Semiconductor Index
+  xbi?: number[];       // XBI Biotech ETF
+  // Stock-specific drivers (v8.0, per-stock mapped)
+  stockDriver1?: number[];  // Primary driving asset (per-stock mapped)
+  stockDriver2?: number[];  // Secondary driving asset (per-stock mapped)
   // FRED macro series (forward-filled daily values)
   fredHySpread?: number[];       // BAMLH0A0HYM2 HY OAS credit spread
   fredYieldCurve?: number[];     // T10Y2Y 10Y-2Y yield curve
@@ -107,6 +148,16 @@ export interface MacroData {
   fredTreasury2y?: number[];     // DGS2 2-year Treasury yield
   fredJoblessClaims?: number[];  // ICSA initial jobless claims
   fredConsumerSentiment?: number[]; // UMCSENT UMich consumer sentiment
+  fredFinancialStress?: number[];   // STLFSI4 St. Louis Fed Financial Stress Index
+  fredT10y3mSpread?: number[];     // T10Y3M 10Y-3M yield spread
+  fredFedFundsRate?: number[];     // DFF Daily Federal Funds Effective Rate
+  fredJpyUsd?: number[];           // DEXJPUS JPY/USD exchange rate
+  // Tail risk & style rotation (v9.0)
+  skew?: number[];        // ^SKEW CBOE SKEW Index (tail risk)
+  iwf?: number[];         // IWF Russell 1000 Growth ETF
+  iwd?: number[];         // IWD Russell 1000 Value ETF
+  xly?: number[];         // XLY Consumer Discretionary SPDR
+  xlp?: number[];         // XLP Consumer Staples SPDR
 }
 
 /**
@@ -154,6 +205,65 @@ export const INDUSTRY_COMMODITY_MAP: Record<string, string> = {
   BA: "HG=F", GE: "HG=F", LMT: "HG=F", MMM: "HG=F", XLI: "HG=F",
   // Crypto-exposed → Bitcoin (BTC-USD)
   COIN: "BTC-USD", SQ: "BTC-USD", PYPL: "BTC-USD",
+};
+
+/**
+ * Maps each stock to 2 specific driving assets (primary, secondary).
+ * Captures business-specific factors not already in sector ETF or commodity mappings.
+ * Researched per-company based on revenue drivers, supply chain, and market dynamics.
+ */
+export const STOCK_SPECIFIC_DRIVERS: Record<string, [string, string]> = {
+  // Semiconductors → SOX index + sub-sector
+  AAPL: ["^SOX", "XRT"],  NVDA: ["^SOX", "BTC-USD"], AMD: ["^SOX", "QQQ"],
+  INTC: ["^SOX", "QQQ"],  AVGO: ["^SOX", "QQQ"],  QCOM: ["^SOX", "QQQ"],
+  TXN: ["^SOX", "XLI"],   AMAT: ["^SOX", "QQQ"],  MU: ["^SOX", "QQQ"],
+  LRCX: ["^SOX", "QQQ"],  KLAC: ["^SOX", "QQQ"],  SNPS: ["^SOX", "IGV"],
+  CDNS: ["^SOX", "IGV"],
+  // Software → IGV + tech
+  MSFT: ["IGV", "QQQ"],   ORCL: ["IGV", "QQQ"],   CRM: ["IGV", "QQQ"],
+  ADBE: ["IGV", "QQQ"],   NOW: ["IGV", "QQQ"],
+  // Cybersecurity → HACK + tech
+  PANW: ["HACK", "QQQ"],  CRWD: ["HACK", "QQQ"],  FTNT: ["HACK", "QQQ"],
+  // Communication/Media
+  GOOGL: ["IGV", "QQQ"],  META: ["IGV", "QQQ"],    NFLX: ["XRT", "QQQ"],
+  DIS: ["XRT", "QQQ"],
+  // Consumer Tech / E-commerce
+  AMZN: ["XRT", "QQQ"],   TSLA: ["LIT", "QQQ"],
+  // Legacy Tech
+  CSCO: ["IGV", "QQQ"],   IBM: ["IGV", "QQQ"],
+  // Fintech / Crypto
+  PYPL: ["IGV", "BTC-USD"], SQ: ["IGV", "ETH-USD"], COIN: ["BTC-USD", "ETH-USD"],
+  // Banks → KRE + rates
+  JPM: ["KRE", "^TNX"],   BAC: ["KRE", "^TNX"],    WFC: ["KRE", "^TNX"],
+  GS: ["KRE", "^TNX"],    MS: ["KRE", "^TNX"],     C: ["KRE", "^TNX"],
+  SCHW: ["KRE", "^TNX"],
+  // Payment Networks
+  V: ["XLF", "QQQ"],      MA: ["XLF", "QQQ"],      AXP: ["XLF", "XRT"],
+  BLK: ["XLF", "QQQ"],
+  // Healthcare / Pharma → IBB + sector
+  JNJ: ["IBB", "XLV"],    UNH: ["XLV", "QQQ"],     LLY: ["IBB", "XBI"],
+  PFE: ["IBB", "XBI"],    ABBV: ["IBB", "XBI"],     MRK: ["IBB", "XBI"],
+  TMO: ["IBB", "XLV"],    ABT: ["IBB", "XLV"],      DHR: ["IBB", "XLV"],
+  BMY: ["IBB", "XBI"],    AMGN: ["IBB", "XBI"],
+  // Consumer Staples
+  PG: ["XLP", "XRT"],     KO: ["XLP", "XRT"],       PEP: ["XLP", "XRT"],
+  COST: ["XRT", "XLP"],   WMT: ["XRT", "XLP"],
+  // Consumer Discretionary
+  MCD: ["XRT", "XLP"],    NKE: ["XRT", "XLY"],      SBUX: ["XRT", "XLY"],
+  TGT: ["XRT", "XLY"],    HD: ["XHB", "XRT"],       LOW: ["XHB", "XRT"],
+  // Energy → XOP + crude oil
+  XOM: ["XOP", "CL=F"],   CVX: ["XOP", "CL=F"],     COP: ["XOP", "CL=F"],
+  SLB: ["XOP", "CL=F"],   EOG: ["XOP", "CL=F"],
+  // Industrial
+  CAT: ["XLI", "HG=F"],   DE: ["XLI", "DBA"],       HON: ["XLI", "ITA"],
+  UNP: ["XLI", "IYT"],    RTX: ["ITA", "XLI"],      BA: ["ITA", "XLI"],
+  GE: ["ITA", "XLI"],     LMT: ["ITA", "XLI"],      MMM: ["XLI", "XLB"],
+  // Travel / Gig
+  ABNB: ["XRT", "QQQ"],   UBER: ["XRT", "QQQ"],
+  // ETFs
+  SPY: ["QQQ", "IWM"],    QQQ: ["^SOX", "IGV"],     IWM: ["SPY", "KRE"],
+  DIA: ["SPY", "XLI"],    XLF: ["KRE", "^TNX"],     XLE: ["XOP", "CL=F"],
+  XLK: ["^SOX", "IGV"],   XLV: ["IBB", "XBI"],      XBI: ["IBB", "XLV"],
 };
 
 // ── Helper functions ──
@@ -277,8 +387,8 @@ function linearSlope(arr: number[]): number {
 }
 
 /**
- * Compute 126 features for each day of the OHLCV array.
- * Returns a 2D array: [numDays][126]
+ * Compute 146 features for each day of the OHLCV array.
+ * Returns a 2D array: [numDays][146]
  * Days with insufficient warmup data get 0-filled features.
  */
 export function computeITransformerFeatures(
@@ -524,7 +634,7 @@ export function computeITransformerFeatures(
   const result: number[][] = [];
 
   for (let i = 0; i < n; i++) {
-    const row: number[] = new Array(126).fill(0);
+    const row: number[] = new Array(154).fill(0);
     const c = close[i];
     const dt = dates[i];
 
@@ -1051,8 +1161,215 @@ export function computeITransformerFeatures(
       row[125] = (macro.fredConsumerSentiment[i] - macro.fredConsumerSentiment[i - 20]) / macro.fredConsumerSentiment[i - 20];
     }
 
+    // ── 126-131: Gamma Squeeze Proxies ──
+    // Volume acceleration (3d avg / 10d avg)
+    if (i >= 9) {
+      const vol3Avg = (volume[i] + volume[i-1] + volume[i-2]) / 3;
+      let vol10Sum = 0;
+      for (let j = i - 9; j <= i; j++) vol10Sum += volume[j];
+      const vol10Avg = vol10Sum / 10;
+      row[126] = vol3Avg / (vol10Avg + 1);
+    }
+    // Price-volume momentum (5d return × volume ratio)
+    if (i >= 4) {
+      const ret5 = close[i - 5] > 0 ? (close[i] - close[i - 5]) / close[i - 5] : 0;
+      const vol3Avg = (volume[i] + volume[i-1] + volume[i-2]) / 3;
+      let vol10Sum = 0;
+      for (let j = Math.max(0, i - 9); j <= i; j++) vol10Sum += volume[j];
+      const vol10Avg = vol10Sum / Math.min(10, i + 1);
+      row[127] = ret5 * (vol3Avg / (vol10Avg + 1));
+    }
+    // Range expansion ratio (intraday range vs 20d average)
+    if (i >= 19) {
+      const rangeToday = (high[i] - low[i]) / (close[i] + 1e-10);
+      let avgRange = 0;
+      for (let j = i - 19; j <= i; j++) avgRange += (high[j] - low[j]) / (close[j] + 1e-10);
+      avgRange /= 20;
+      row[128] = rangeToday / (avgRange + 1e-10);
+    }
+    // Gap acceleration (10d gap freq - 20d gap freq)
+    if (i >= 19) {
+      let gapFreq10 = 0, gapFreq20 = 0;
+      for (let j = i - 9; j <= i; j++) {
+        if (Math.abs(gap[j]) > 0.01) gapFreq10++;
+      }
+      for (let j = i - 19; j <= i; j++) {
+        if (Math.abs(gap[j]) > 0.01) gapFreq20++;
+      }
+      row[129] = gapFreq10 / 10 - gapFreq20 / 20;
+    }
+    // Squeeze breakout signal (close > upper BB + high volume z-score)
+    if (bbSma[i] != null && bbStd[i] != null && vol20[i] != null && volStd20[i] != null) {
+      const bbUpper = bbSma[i]! + 2 * bbStd[i]!;
+      const aboveBB = close[i] > bbUpper ? 1 : 0;
+      const volZ = (volume[i] - vol20[i]!) / (volStd20[i]! + 1e-10);
+      row[130] = aboveBB * (volZ > 1.5 ? 1 : 0);
+    }
+    // Volume-price impact (abs return / relative volume)
+    if (i >= 1 && vol20[i] != null) {
+      const absRet = Math.abs(close[i] - close[i - 1]) / (close[i - 1] + 1e-10);
+      const relVol = volume[i] / (vol20[i]! + 1);
+      row[131] = absRet / (relVol + 1e-10);
+    }
+
+    // ── 132-135: Market Breadth & Rotation ──
+    // Tech rotation (QQQ - SPY 20d return)
+    if (macro?.qqq && macro?.spy && i >= 20 && macro.qqq[i - 20] > 0 && macro.spy[i - 20] > 0) {
+      const qqqRet = (macro.qqq[i] - macro.qqq[i - 20]) / macro.qqq[i - 20];
+      const spyRet = (macro.spy[i] - macro.spy[i - 20]) / macro.spy[i - 20];
+      row[132] = qqqRet - spyRet;
+    }
+    // Small cap rotation (IWM - SPY 20d return)
+    if (macro?.iwm && macro?.spy && i >= 20 && macro.iwm[i - 20] > 0 && macro.spy[i - 20] > 0) {
+      const iwmRet = (macro.iwm[i] - macro.iwm[i - 20]) / macro.iwm[i - 20];
+      const spyRet = (macro.spy[i] - macro.spy[i - 20]) / macro.spy[i - 20];
+      row[133] = iwmRet - spyRet;
+    }
+    // SOX semiconductor momentum (20d return)
+    if (macro?.sox && i >= 20 && macro.sox[i - 20] > 0) {
+      row[134] = (macro.sox[i] - macro.sox[i - 20]) / macro.sox[i - 20];
+    }
+    // XBI biotech momentum (20d return)
+    if (macro?.xbi && i >= 20 && macro.xbi[i - 20] > 0) {
+      row[135] = (macro.xbi[i] - macro.xbi[i - 20]) / macro.xbi[i - 20];
+    }
+
+    // ── 136-139: Sentiment Proxies ──
+    // Realized vs implied volatility ratio
+    if (macro?.vix && macro.vix[i] > 0 && vol20d[i] != null) {
+      const hv20Ann = vol20d[i]! * Math.sqrt(252);
+      row[136] = hv20Ann / (macro.vix[i] / 100 + 1e-10);
+    } else {
+      row[136] = 1.0;
+    }
+    // VIX-SPY short-term correlation (10d)
+    if (macro?.vix && macro?.spy && i >= 9) {
+      const vixRets: number[] = [];
+      const spyRets: number[] = [];
+      for (let j = i - 9; j <= i; j++) {
+        vixRets.push(j > 0 && macro.vix![j-1] > 0 ? (macro.vix![j] - macro.vix![j-1]) / macro.vix![j-1] : 0);
+        spyRets.push(j > 0 && macro.spy![j-1] > 0 ? (macro.spy![j] - macro.spy![j-1]) / macro.spy![j-1] : 0);
+      }
+      const corrResult = rollingCorr(vixRets, spyRets, 10);
+      row[137] = corrResult[9] ?? -0.7;
+    } else {
+      row[137] = -0.7; // typical negative correlation
+    }
+    // Credit momentum 10d (HYG 10d return)
+    if (macro?.hyg && i >= 10 && macro.hyg[i - 10] > 0) {
+      row[138] = (macro.hyg[i] - macro.hyg[i - 10]) / macro.hyg[i - 10];
+    }
+    // Fear composite (VIX z-score × (1 - credit spread change))
+    if (macro?.vix && i >= 19) {
+      const vixW = macro.vix.slice(i - 19, i + 1);
+      const vixM = vixW.reduce((a, b) => a + b, 0) / 20;
+      const vixS = Math.sqrt(vixW.reduce((a, b) => a + (b - vixM) ** 2, 0) / 20) + 1e-10;
+      const vixZ = (macro.vix[i] - vixM) / vixS;
+      if (macro?.hyg && macro?.tlt && i >= 20 && macro.tlt[i] > 0 && macro.tlt[i - 20] > 0) {
+        const hygTltNow = macro.hyg[i] / (macro.tlt[i] + 1e-10);
+        const hygTltPrev = macro.hyg[i - 20] / (macro.tlt[i - 20] + 1e-10);
+        const creditChg = hygTltPrev > 0 ? (hygTltNow - hygTltPrev) / hygTltPrev : 0;
+        row[139] = vixZ * (1 - creditChg);
+      } else {
+        row[139] = vixZ;
+      }
+    }
+
+    // ── 140-143: Stock-Specific Drivers ──
+    if (macro?.stockDriver1) {
+      if (i >= 20 && macro.stockDriver1[i - 20] > 0) {
+        row[140] = (macro.stockDriver1[i] - macro.stockDriver1[i - 20]) / macro.stockDriver1[i - 20];
+      }
+      if (i >= 19) {
+        // Compute correlation between stock log returns and driver log returns
+        const driverLogRet: number[] = [];
+        for (let j = 0; j <= i; j++) {
+          driverLogRet.push(j === 0 || !macro.stockDriver1[j - 1] || macro.stockDriver1[j - 1] <= 0
+            ? 0 : Math.log(macro.stockDriver1[j] / macro.stockDriver1[j - 1]));
+        }
+        const corrD1 = rollingCorr(logRet.slice(0, i + 1), driverLogRet, 20);
+        row[141] = corrD1[i] ?? 0;
+      }
+    }
+    if (macro?.stockDriver2) {
+      if (i >= 20 && macro.stockDriver2[i - 20] > 0) {
+        row[142] = (macro.stockDriver2[i] - macro.stockDriver2[i - 20]) / macro.stockDriver2[i - 20];
+      }
+      if (i >= 19) {
+        const driver2LogRet: number[] = [];
+        for (let j = 0; j <= i; j++) {
+          driver2LogRet.push(j === 0 || !macro.stockDriver2[j - 1] || macro.stockDriver2[j - 1] <= 0
+            ? 0 : Math.log(macro.stockDriver2[j] / macro.stockDriver2[j - 1]));
+        }
+        const corrD2 = rollingCorr(logRet.slice(0, i + 1), driver2LogRet, 20);
+        row[143] = corrD2[i] ?? 0;
+      }
+    }
+
+    // ── 144-145: FRED Extended ──
+    if (macro?.fredFinancialStress) {
+      row[144] = macro.fredFinancialStress[i] ?? 0;
+    }
+    if (macro?.fredT10y3mSpread) {
+      row[145] = macro.fredT10y3mSpread[i] ?? 0;
+    }
+
+    // ── 146-147: FRED Rates — Fed Funds Rate ──
+    if (macro?.fredFedFundsRate) {
+      row[146] = macro.fredFedFundsRate[i] ?? 0;
+      if (i >= 20 && macro.fredFedFundsRate[i - 20] != null) {
+        row[147] = (macro.fredFedFundsRate[i] ?? 0) - (macro.fredFedFundsRate[i - 20] ?? 0);
+      }
+    }
+
+    // ── 148-149: FRED FX — JPY/USD ──
+    if (macro?.fredJpyUsd && macro.fredJpyUsd[i]) {
+      if (i >= 20 && macro.fredJpyUsd[i - 20]) {
+        row[148] = (macro.fredJpyUsd[i] - macro.fredJpyUsd[i - 20]) / macro.fredJpyUsd[i - 20];
+      }
+      // Z-score of JPY/USD over 20d
+      if (i >= 19) {
+        const jpySlice = macro.fredJpyUsd.slice(Math.max(0, i - 19), i + 1).filter(v => v > 0);
+        if (jpySlice.length >= 5) {
+          const mean = jpySlice.reduce((a, b) => a + b, 0) / jpySlice.length;
+          const stdDev = Math.sqrt(jpySlice.reduce((a, b) => a + (b - mean) ** 2, 0) / jpySlice.length) + 1e-10;
+          row[149] = (macro.fredJpyUsd[i] - mean) / stdDev;
+        }
+      }
+    }
+
+    // ── 150-151: CBOE SKEW Index — tail risk ──
+    if (macro?.skew && macro.skew[i]) {
+      row[150] = macro.skew[i];
+      // Z-score of SKEW over 20d
+      if (i >= 19) {
+        const skewSlice = macro.skew.slice(Math.max(0, i - 19), i + 1).filter(v => v > 0);
+        if (skewSlice.length >= 5) {
+          const mean = skewSlice.reduce((a, b) => a + b, 0) / skewSlice.length;
+          const stdDev = Math.sqrt(skewSlice.reduce((a, b) => a + (b - mean) ** 2, 0) / skewSlice.length) + 1e-10;
+          row[151] = (macro.skew[i] - mean) / stdDev;
+        }
+      }
+    }
+
+    // ── 152: Value/Growth Rotation — IWF vs IWD spread ──
+    if (macro?.iwf && macro?.iwd && i >= 20 &&
+        macro.iwf[i] && macro.iwf[i - 20] && macro.iwd[i] && macro.iwd[i - 20]) {
+      const iwfReturn = Math.log(macro.iwf[i] / macro.iwf[i - 20]);
+      const iwdReturn = Math.log(macro.iwd[i] / macro.iwd[i - 20]);
+      row[152] = iwfReturn - iwdReturn; // positive = growth outperforming value
+    }
+
+    // ── 153: Risk Appetite — XLY vs XLP spread ──
+    if (macro?.xly && macro?.xlp && i >= 20 &&
+        macro.xly[i] && macro.xly[i - 20] && macro.xlp[i] && macro.xlp[i - 20]) {
+      const xlyReturn = Math.log(macro.xly[i] / macro.xly[i - 20]);
+      const xlpReturn = Math.log(macro.xlp[i] / macro.xlp[i - 20]);
+      row[153] = xlyReturn - xlpReturn; // positive = risk-on, negative = risk-off
+    }
+
     // Replace NaN/Infinity
-    for (let f = 0; f < 126; f++) {
+    for (let f = 0; f < 154; f++) {
       if (!isFinite(row[f])) row[f] = 0;
     }
 

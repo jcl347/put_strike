@@ -2,13 +2,17 @@
  * FRED (Federal Reserve Economic Data) API client.
  *
  * Fetches macroeconomic time series from the St. Louis Fed FRED API.
- * Used for 6 additional iTransformer features:
+ * Used for 8 iTransformer features:
  *   - BAMLH0A0HYM2: ICE BofA US High Yield OAS (credit spread)
  *   - T10Y2Y: 10-Year minus 2-Year Treasury yield curve
  *   - T10YIE: 10-Year Breakeven Inflation Rate
  *   - DGS2: 2-Year Treasury Constant Maturity Rate
  *   - ICSA: Initial Jobless Claims (weekly, national)
  *   - UMCSENT: University of Michigan Consumer Sentiment
+ *   - STLFSI4: St. Louis Fed Financial Stress Index (weekly, replaced STLFSI2)
+ *   - T10Y3M: 10-Year minus 3-Month Treasury spread (recession signal)
+ *   - DFF: Daily Federal Funds Effective Rate (monetary policy stance)
+ *   - DEXJPUS: JPY/USD Exchange Rate (carry trade proxy)
  *
  * Requires FRED_API_KEY environment variable.
  * Rate limit: 120 requests/minute (free tier).
@@ -28,6 +32,10 @@ export interface FredMacroData {
   treasury2y?: Record<string, number>;     // DGS2
   joblessClaims?: Record<string, number>;  // ICSA
   consumerSentiment?: Record<string, number>; // UMCSENT
+  financialStress?: Record<string, number>;   // STLFSI4
+  t10y3mSpread?: Record<string, number>;     // T10Y3M
+  fedFundsRate?: Record<string, number>;     // DFF
+  jpyUsd?: Record<string, number>;           // DEXJPUS
 }
 
 // Cache to avoid hammering FRED API on every request
@@ -42,6 +50,10 @@ const FRED_SERIES = [
   { id: "DGS2", key: "treasury2y" },
   { id: "ICSA", key: "joblessClaims" },
   { id: "UMCSENT", key: "consumerSentiment" },
+  { id: "STLFSI4", key: "financialStress" },
+  { id: "T10Y3M", key: "t10y3mSpread" },
+  { id: "DFF", key: "fedFundsRate" },
+  { id: "DEXJPUS", key: "jpyUsd" },
 ] as const;
 
 /**

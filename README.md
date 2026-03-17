@@ -40,8 +40,9 @@ PutStrike screens 80+ high-liquidity stocks, scores put selling opportunities us
 │  └── Sentiment (10%)        — Contrarian fear/greed     │
 │                                                         │
 │  Tier 2: iTransformer (ONNX from HuggingFace, ~100ms)  │
-│  ├── Universal model: all 80+ stocks                    │
-│  ├── 100+ features (OHLCV + macro + calendar)           │
+│  ├── Per-stock models: 90 individually trained          │
+│  ├── 154 features (OHLCV + macro + gamma squeeze +     │
+│  │   sentiment + drivers + tail risk + style rotation)  │
 │  ├── 60d lookback → 60 trading day forecast             │
 │  ├── Cross-variate attention (features as tokens)       │
 │  └── Concordance validation vs scoring model            │
@@ -61,6 +62,9 @@ PutStrike screens 80+ high-liquidity stocks, scores put selling opportunities us
 │  Data Sources                                           │
 │  ├── yahoo-finance2 (quotes, options, OHLCV)            │
 │  ├── Macro: ^VIX, ^VIX3M, ^TNX, DX-Y.NYB, GC=F, CL=F │
+│  ├── Breadth: QQQ, IWM, ^SOX, XBI + 13 driver ETFs    │
+│  ├── Tail risk: ^SKEW + Style: IWF, IWD, XLY, XLP     │
+│  ├── FRED API: 10 macro series (rates, FX, credit)     │
 │  ├── HuggingFace Hub (ONNX model download + cache)     │
 │  └── Neon Postgres (simulation trading persistence)    │
 └─────────────────────────────────────────────────────────┘
@@ -78,38 +82,71 @@ PutStrike screens 80+ high-liquidity stocks, scores put selling opportunities us
 ```
 
 **Training approach:**
-- **Universal model** trained on all 80+ screener stocks simultaneously
-- 10 years of daily data per stock → ~200K training windows total
-- 100+ features: OHLCV technicals + macro indicators (VIX term structure, Treasury yields, USD, Gold, Oil)
+- **Per-stock models** — one iTransformer trained per stock on that stock's data
+- 10 years of daily data per stock → ~2,500 sliding window samples each
+- 154 features: OHLCV technicals + macro + gamma squeeze proxies + sentiment + stock-specific drivers + FRED + tail risk + style rotation
 - Walk-forward validation: 70/15/15 chronological split (no look-ahead bias)
 - HuberLoss(delta=0.02) — robust to earnings/event return outliers
 - iTransformer architecture (ICLR 2024): features as tokens, cross-variate multi-head attention
+- Feature importance analysis via permutation importance after training
 
-**Why universal over per-stock models:**
-- 200K samples >> 2,500 per stock → better generalization
-- Features encode stock identity (beta, market cap, vol regime)
-- Single model to deploy (~2-5MB ONNX)
-- Captures cross-stock patterns (sector rotation, risk-on/off)
+### Feature Categories (154 total)
+
+| Category | Count | Description |
+|----------|-------|-------------|
+| OHLCV Technicals | 83 | SMA/EMA, RSI, MACD, BB, ATR, volume, stochastic, Aroon, returns, volatility, statistics, calendar, trend |
+| Relative Strength | 7 | Stock vs SPY/VIX correlations, rolling beta, volume-price correlation |
+| Advanced Volume | 4 | MFI-14, A/D line z-score, VWAP deviation, Force Index |
+| Price Structure | 5 | Range position, ATR ratio, consecutive days, candle body |
+| Regime Detection | 5 | Hurst exponent, Parkinson/GK vol, consistency, tail ratio |
+| Intermarket | 4 | SPY momentum, gold/oil ratio, DXY-VIX interaction |
+| Sector/Credit | 12 | Sector ETF relative strength, credit signals, VIX9D, commodity, copper/gold, BTC |
+| FRED Macro | 6 | HY spread, yield curve, inflation, 2Y yield, jobless claims, consumer sentiment |
+| **Gamma Squeeze** | **6** | Volume acceleration, price-volume momentum, range expansion, gap acceleration, squeeze breakout, vol-price impact |
+| **Market Breadth** | **4** | Tech rotation (QQQ-SPY), small cap rotation (IWM-SPY), SOX momentum, XBI momentum |
+| **Sentiment** | **4** | Realized/implied vol ratio, VIX-SPY correlation, credit momentum, fear composite |
+| **Stock Drivers** | **4** | Per-company primary/secondary driving asset returns & correlations (90 unique mappings) |
+| **FRED Extended** | **2** | Financial Stress Index, 10Y-3M yield spread |
+| **FRED Rates** | **2** | Federal Funds Rate level, 20d change (monetary policy stance) |
+| **FRED FX** | **2** | JPY/USD 20d change, JPY/USD z-score (carry trade proxy) |
+| **Tail Risk** | **2** | CBOE SKEW level, SKEW 20d z-score (options tail risk pricing) |
+| **Style Rotation** | **1** | IWF vs IWD 20d return spread (value/growth rotation) |
+| **Risk Appetite** | **1** | XLY vs XLP 20d return spread (consumer disc. vs staples) |
 
 ### Additional Data Sources
 
-Beyond per-stock OHLCV, the model ingests macro indicators (all free via Yahoo Finance):
+Beyond per-stock OHLCV, the model ingests 33+ data tickers (all free via Yahoo Finance + FRED API):
 
 | Ticker | Description | Signal |
 |--------|-------------|--------|
-| ^VIX, ^VIX3M | VIX term structure | Contango = complacency, backwardation = stress |
+| ^VIX, ^VIX3M, ^VIX9D | VIX term structure | Contango = complacency, backwardation = stress |
 | ^TNX | 10-year Treasury yield | Rate regime, growth vs value rotation |
 | DX-Y.NYB | US Dollar Index | Inverse equity correlation, import/export impact |
-| GC=F | Gold futures | Risk-off flight indicator |
-| CL=F | Crude Oil futures | Energy sector driver, inflation proxy |
+| GC=F, CL=F, HG=F | Gold, Oil, Copper futures | Risk-off, energy, economic health |
+| SPY, QQQ, IWM | Market benchmarks | Relative strength, style rotation, breadth |
+| ^SOX | Philadelphia Semiconductor Index | Chip cycle indicator |
+| HYG, TLT | Credit & Treasury ETFs | Risk appetite, flight to safety |
+| IGV, HACK, KRE, ITA, XOP, IBB, XHB, XRT, LIT, etc. | Stock-specific driver ETFs | Per-company business drivers |
+| STLFSI4, T10Y3M | FRED: Financial Stress, yield spread | Recession signal, systemic risk |
+| DFF | FRED: Federal Funds Rate | Monetary policy stance, bank NIM driver |
+| DEXJPUS | FRED: JPY/USD exchange rate | Carry trade unwinding proxy, risk-off signal |
+| ^SKEW | CBOE SKEW Index | Options tail risk pricing, crash protection cost |
+| IWF, IWD | Russell 1000 Growth/Value ETFs | Value/growth style rotation regime |
+| XLY, XLP | Consumer Disc./Staples SPDRs | Risk appetite indicator |
 
 ### Hypotheses
 
-1. **Universal > per-stock**: Universal model generalizes better on held-out stocks
-2. **Macro improves predictions**: VIX/yields/dollar add signal beyond OHLCV
-3. **Concordance predicts profitability**: Puts where scoring + iTransformer agree have higher win rates
-4. **Longer lookback for longer horizons**: 120d lookback improves 45-60d predictions
-5. **Feature selection vs all-features**: Top-K by mutual information vs full feature set
+1. **Macro improves predictions**: VIX/yields/dollar add signal beyond OHLCV
+2. **Concordance predicts profitability**: Puts where scoring + iTransformer agree have higher win rates
+3. **Longer lookback for longer horizons**: 120d lookback improves 45-60d predictions
+4. **Gamma squeeze proxies detect mechanical amplification**: Volume/range/gap features improve short-term accuracy for high-options-volume stocks
+5. **Stock-specific drivers improve per-stock predictions**: Business-relevant signals (SOX for chips, KRE for banks, etc.) outperform generic features
+6. **Market breadth + sentiment improve regime detection**: Cross-market rotation and fear signals improve predictions during risk-off events
+7. **Monetary policy features improve rate-sensitive stocks**: DFF features help bank stocks (directly sets NIM) and high-duration growth stocks
+8. **Carry trade proxy detects risk-off events**: JPY/USD change detects yen carry trade unwinding (caused Aug 2024 crash) as leading indicator
+9. **SKEW captures tail risk not in VIX**: Options tail risk pricing helps high-beta stocks (semis, fintech, crypto-adjacent)
+10. **Value/growth rotation improves style-sensitive stocks**: IWF-IWD spread captures regime shifts between growth and value investing styles
+11. **Risk appetite indicator helps consumer sector**: XLY-XLP spread captures institutional risk-on/risk-off positioning for consumer stocks
 
 ## Quick Start
 
