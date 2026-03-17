@@ -4,6 +4,7 @@ import {
   normalizeFeatures,
   SECTOR_ETF_MAP,
   INDUSTRY_COMMODITY_MAP,
+  STOCK_SPECIFIC_DRIVERS,
   type OHLCV,
   type MacroData,
 } from "@/lib/itransformer-features";
@@ -16,9 +17,10 @@ export const maxDuration = 30;
 
 /**
  * Forecast feature endpoint.
- * Computes the 120 iTransformer features from OHLCV + macro + sector/credit data,
- * normalizes them using per-stock stats from HuggingFace model config,
- * and returns a ready-to-use feature matrix for client-side ONNX inference.
+ * Computes the 146 iTransformer features from OHLCV + macro + sector/credit +
+ * gamma squeeze + sentiment + stock-specific driver data, normalizes them using
+ * per-stock stats from HuggingFace model config, and returns a ready-to-use
+ * feature matrix for client-side ONNX inference.
  *
  * GET /api/forecast?symbol=AAPL
  */
@@ -30,15 +32,16 @@ export async function GET(request: NextRequest) {
 
   const upperSymbol = symbol.toUpperCase();
 
-  // Determine per-stock sector ETF and industry commodity
+  // Determine per-stock sector ETF, industry commodity, and stock-specific drivers
   const sectorEtfSymbol = SECTOR_ETF_MAP[upperSymbol];
   const industryCommoditySymbol = INDUSTRY_COMMODITY_MAP[upperSymbol];
+  const stockDrivers = STOCK_SPECIFIC_DRIVERS[upperSymbol];
 
   try {
     // Fetch OHLCV (1 year) + macro data + FRED data in parallel
     const [ohlcv, rawMacro, fredData] = await Promise.all([
       fetchOHLCV(upperSymbol, 1),
-      fetchMacroDataWithDates(sectorEtfSymbol, industryCommoditySymbol),
+      fetchMacroDataWithDates(sectorEtfSymbol, industryCommoditySymbol, stockDrivers),
       fetchFredMacroData(),
     ]);
 
@@ -153,16 +156,24 @@ interface RawMacroData {
   industryCommodity?: Record<string, number>;
   copper?: Record<string, number>;
   btc?: Record<string, number>;
+  // v8.0: market breadth + stock-specific drivers
+  qqq?: Record<string, number>;
+  iwm?: Record<string, number>;
+  sox?: Record<string, number>;
+  xbi?: Record<string, number>;
+  stockDriver1?: Record<string, number>;
+  stockDriver2?: Record<string, number>;
 }
 
 /**
  * Fetch macro data with date keys (not raw arrays).
  * This allows proper date alignment with any stock's trading days.
- * Optionally fetches per-stock sector ETF and industry commodity tickers.
+ * Optionally fetches per-stock sector ETF, industry commodity, and stock-specific drivers.
  */
 async function fetchMacroDataWithDates(
   sectorEtfSymbol?: string,
-  industryCommoditySymbol?: string
+  industryCommoditySymbol?: string,
+  stockDrivers?: [string, string]
 ): Promise<RawMacroData> {
   const YahooFinanceModule = (await import("yahoo-finance2")).default;
   let yahooFinance: any;
@@ -186,6 +197,11 @@ async function fetchMacroDataWithDates(
     { symbol: "^VIX9D", key: "vix9d" },
     { symbol: "HG=F", key: "copper" },
     { symbol: "BTC-USD", key: "btc" },
+    // v8.0: market breadth & rotation tickers
+    { symbol: "QQQ", key: "qqq" },
+    { symbol: "IWM", key: "iwm" },
+    { symbol: "^SOX", key: "sox" },
+    { symbol: "XBI", key: "xbi" },
   ];
 
   // Add per-stock sector ETF if mapped (avoid duplicates with SPY)
@@ -195,16 +211,28 @@ async function fetchMacroDataWithDates(
 
   // Add per-stock industry commodity if mapped (avoid duplicates)
   if (industryCommoditySymbol) {
-    const existingKeys = tickers.map(t => t.symbol);
-    if (!existingKeys.includes(industryCommoditySymbol)) {
+    const existingSymbols = tickers.map(t => t.symbol);
+    if (!existingSymbols.includes(industryCommoditySymbol)) {
       tickers.push({ symbol: industryCommoditySymbol, key: "industryCommodity" });
     } else {
-      // Commodity already in base tickers — map the key
-      const existing = tickers.find(t => t.symbol === industryCommoditySymbol);
-      if (existing) {
-        // We'll duplicate the data in alignment step
-        tickers.push({ symbol: industryCommoditySymbol, key: "industryCommodity" });
-      }
+      tickers.push({ symbol: industryCommoditySymbol, key: "industryCommodity" });
+    }
+  }
+
+  // Add stock-specific driver tickers (v8.0)
+  if (stockDrivers) {
+    const existingSymbols = tickers.map(t => t.symbol);
+    const [driver1Sym, driver2Sym] = stockDrivers;
+    if (!existingSymbols.includes(driver1Sym)) {
+      tickers.push({ symbol: driver1Sym, key: "stockDriver1" });
+    } else {
+      // Driver already in base tickers — duplicate with driver key
+      tickers.push({ symbol: driver1Sym, key: "stockDriver1" });
+    }
+    if (!existingSymbols.includes(driver2Sym)) {
+      tickers.push({ symbol: driver2Sym, key: "stockDriver2" });
+    } else {
+      tickers.push({ symbol: driver2Sym, key: "stockDriver2" });
     }
   }
 
@@ -292,6 +320,13 @@ function alignMacroToStockDates(
   aligned.industryCommodity = forwardFillAlign(rawMacro.industryCommodity);
   aligned.copper = forwardFillAlign(rawMacro.copper);
   aligned.btc = forwardFillAlign(rawMacro.btc);
+  // v8.0: market breadth + stock-specific drivers
+  aligned.qqq = forwardFillAlign(rawMacro.qqq);
+  aligned.iwm = forwardFillAlign(rawMacro.iwm);
+  aligned.sox = forwardFillAlign(rawMacro.sox);
+  aligned.xbi = forwardFillAlign(rawMacro.xbi);
+  aligned.stockDriver1 = forwardFillAlign(rawMacro.stockDriver1);
+  aligned.stockDriver2 = forwardFillAlign(rawMacro.stockDriver2);
 
   // FRED macro data alignment
   if (fredData) {
@@ -301,6 +336,8 @@ function alignMacroToStockDates(
     aligned.fredTreasury2y = forwardFillAlign(fredData.treasury2y);
     aligned.fredJoblessClaims = forwardFillAlign(fredData.joblessClaims);
     aligned.fredConsumerSentiment = forwardFillAlign(fredData.consumerSentiment);
+    aligned.fredFinancialStress = forwardFillAlign(fredData.financialStress);
+    aligned.fredT10y3mSpread = forwardFillAlign(fredData.t10y3mSpread);
   }
 
   return aligned;

@@ -277,7 +277,7 @@ Standard Transformers treat time steps as tokens. iTransformer **inverts** this 
 
 Config: `d_model=128, n_heads=8, n_layers=3, d_ff=256, dropout=0.15`
 
-### Feature Engineering (126 features)
+### Feature Engineering (146 features)
 
 Features computed in both Python (notebook) and TypeScript (website) — must stay synchronized:
 
@@ -307,6 +307,11 @@ Features computed in both Python (notebook) and TypeScript (website) — must st
 | Industry Commodity | 2 | Per-stock commodity correlation and return | NG=F, HG=F, BTC-USD |
 | Intermarket Extended | 2 | Copper/gold ratio change, BTC sentiment | HG=F, BTC-USD |
 | FRED Macro | 6 | HY credit spread, yield curve, breakeven inflation, 2Y yield, jobless claims z-score, consumer sentiment change | FRED API |
+| **Gamma Squeeze Proxies** | 6 | Volume acceleration 3/10, price-volume momentum, range expansion ratio, gap acceleration, squeeze breakout signal, volume-price impact | OHLCV |
+| **Market Breadth** | 4 | Tech rotation (QQQ-SPY), small cap rotation (IWM-SPY), SOX semiconductor momentum, XBI biotech momentum | QQQ, IWM, ^SOX, XBI |
+| **Sentiment Proxies** | 4 | Realized/implied vol ratio, VIX-SPY 10d correlation, credit momentum 10d, fear composite | OHLCV + macro |
+| **Stock-Specific Drivers** | 4 | Per-company primary/secondary driver returns and correlations | Per-stock ETF/index mapping |
+| **FRED Extended** | 2 | St. Louis Fed Financial Stress Index, 10Y-3M Treasury spread | FRED API |
 
 **Macro data sources:**
 - `^VIX`, `^VIX3M` — VIX term structure (contango/backwardation signals risk appetite)
@@ -321,6 +326,24 @@ Features computed in both Python (notebook) and TypeScript (website) — must st
 - `HG=F` — Copper futures (economic health indicator, copper/gold ratio)
 - `BTC-USD` — Bitcoin (risk-on sentiment, fintech sector driver)
 - `NG=F` — Natural Gas futures (energy sector commodity, via industry mapping)
+- `QQQ` — Invesco QQQ Trust (NASDAQ 100, tech rotation signal)
+- `IWM` — iShares Russell 2000 ETF (small cap rotation, risk appetite breadth)
+- `^SOX` — Philadelphia Semiconductor Index (chip cycle indicator)
+
+**Stock-specific driver tickers** (per-stock mapped via `STOCK_SPECIFIC_DRIVERS`):
+- `IGV` — iShares Expanded Tech-Software ETF (software company driver)
+- `HACK` — ETFMG Prime Cyber Security ETF (cybersecurity company driver)
+- `KRE` — SPDR S&P Regional Banking ETF (bank stock driver)
+- `ITA` — iShares U.S. Aerospace & Defense ETF (defense company driver)
+- `XOP` — SPDR S&P Oil & Gas Exploration ETF (energy company driver)
+- `IBB` — iShares Biotechnology ETF (pharma/biotech company driver)
+- `XHB` — SPDR S&P Homebuilders ETF (home improvement company driver)
+- `XRT` — SPDR S&P Retail ETF (consumer/retail company driver)
+- `LIT` — Global X Lithium & Battery Tech ETF (EV company driver)
+- `ETH-USD` — Ethereum (crypto-exposed company driver)
+- `DBA` — Invesco DB Agriculture Fund (agricultural equipment driver)
+- `IYT` — iShares U.S. Transportation ETF (railroad/transport driver)
+- `XLB` — Materials Select Sector SPDR (materials/industrial driver)
 
 **FRED API data sources** (requires `FRED_API_KEY` env var):
 - `BAMLH0A0HYM2` — ICE BofA US High Yield OAS (credit spread level, risk appetite)
@@ -329,10 +352,13 @@ Features computed in both Python (notebook) and TypeScript (website) — must st
 - `DGS2` — 2-Year Treasury Constant Maturity Rate (short-term rate expectations)
 - `ICSA` — Initial Jobless Claims, weekly (labor market health, z-scored over 20d)
 - `UMCSENT` — University of Michigan Consumer Sentiment, monthly (consumer confidence, 20d pct change)
+- `STLFSI2` — St. Louis Fed Financial Stress Index, weekly (composite of 18 financial indicators; 0 = normal, positive = above-average stress)
+- `T10Y3M` — 10-Year minus 3-Month Treasury spread (alternative recession indicator, more sensitive than 10Y-2Y; inversion preceded every US recession since 1970)
 
 **Per-stock mappings:**
 - `SECTOR_ETF_MAP` — Maps each stock to its GICS sector ETF (XLK, XLF, XLV, XLE, XLI, XLY, XLP, XLC). Sector-relative features capture whether a stock is outperforming/underperforming its peers, independent of broad market moves.
 - `INDUSTRY_COMMODITY_MAP` — Maps energy stocks to NG=F, industrials to HG=F, fintech to BTC-USD. Only stocks with strong commodity sensitivity are mapped; unmapped stocks get 0-filled commodity features.
+- `STOCK_SPECIFIC_DRIVERS` — Maps each stock to 2 unique driving assets (primary, secondary) based on company business model and market dynamics. Examples: NVDA→(^SOX, BTC-USD), JPM→(KRE, ^TNX), TSLA→(LIT, QQQ), BA→(ITA, XLI). See `src/lib/itransformer-features.ts` for full mapping. Unmapped stocks get 0-filled driver features.
 
 ### Prediction Horizons
 
@@ -388,12 +414,16 @@ iTransformer predictions validate the scoring model's recommendations:
 5. **H5: Relative strength + regime features improve tail accuracy** — The 25 new v5.0 features (relative strength, advanced volume, regime detection, intermarket) should improve predictions for stocks with the worst v4.0 accuracy (AMAT, INTC, PANW at ~52-55%) by providing market context that OHLCV alone misses.
 6. **H6: Credit/sector/commodity features improve sector-specific accuracy** — The 12 v6.0 features (sector ETF relative strength, credit market signals, industry commodities) should improve predictions for sector-sensitive stocks (energy, financials, industrials) by capturing sector rotation, credit conditions, and commodity sensitivity that broad market indicators miss.
 7. **H7: FRED macro indicators improve regime-change predictions** — The 6 v7.0 FRED features (HY spread, yield curve, breakeven inflation, 2Y yield, jobless claims, consumer sentiment) should improve predictions during macro regime changes (rate hikes, credit stress, recession signals) by providing direct economic data that market-derived proxies (VIX, HYG/TLT) may lag.
+8. **H8: Gamma squeeze proxies detect mechanical price amplification** — The 6 v8.0 gamma squeeze features (volume acceleration, price-volume momentum, range expansion, gap acceleration, squeeze breakout, volume-price impact) should improve short-term (7-14d) directional accuracy by detecting when market maker hedging flows are amplifying price moves, especially for high-options-volume stocks (TSLA, NVDA, AMD, SPY).
+9. **H9: Stock-specific drivers improve per-stock predictions** — The 4 v8.0 stock-specific driver features should improve predictions for stocks with strong sector/industry dependencies by providing business-relevant signals. Test by comparing per-stock accuracy with vs without driver features. Stocks with strongest expected improvement: energy (XOP correlation), banks (KRE + rates), semis (SOX), defense (ITA).
+10. **H10: Market breadth + sentiment features improve regime detection** — The 8 v8.0 market breadth and sentiment features (tech rotation, small cap rotation, SOX/XBI momentum, vol risk premium, fear composite) should improve predictions during style rotation and risk-off events by providing cross-market context that single-stock OHLCV misses.
 
 ### Modifying the ML Pipeline
 
 - **Colab secrets**: Add `HF_TOKEN`, `HF_REPO_ID`, and `FRED_API_KEY` via the Secrets panel (key icon) in Colab
 - **Training config**: Edit Cell 3 of `colab/train_itransformer.ipynb`
-- **Feature engineering**: Edit `compute_features()` in the notebook AND `src/lib/itransformer-features.ts` (must stay in sync). Also update `src/app/api/forecast/route.ts` macro tickers if adding new data sources. FRED features also require `src/lib/fred.ts` updates
+- **Feature engineering**: Edit `compute_features()` in the notebook AND `src/lib/itransformer-features.ts` (must stay in sync). Also update `src/app/api/forecast/route.ts` macro tickers if adding new data sources. FRED features also require `src/lib/fred.ts` updates. Stock-specific driver mappings in `STOCK_SPECIFIC_DRIVERS` (both files).
+- **Feature importance**: Run Cell 9 after training — performs permutation importance analysis per stock, outputs `feature_importance_report.json` for Claude analysis. Requires state dicts saved during training (Cell 7).
 - **Model architecture**: Edit the `iTransformer` class in notebook Cell 6
 - **Website inference**: Edit `src/lib/hf-model.ts`
 - **ONNX export**: Uses the legacy TorchScript exporter (`dynamo=False`) with `dynamic_axes` because the dynamo exporter (`torch.export.export`) fails on RevIN's dynamic buffer reassignment and string `mode` parameter. Requires `onnxscript` pip package (PyTorch ONNX infrastructure dependency). The `TransformerEncoder` uses `enable_nested_tensor=False` to suppress warnings when `norm_first=True`.
