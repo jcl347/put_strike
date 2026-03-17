@@ -9,7 +9,7 @@
  *   - DGS2: 2-Year Treasury Constant Maturity Rate
  *   - ICSA: Initial Jobless Claims (weekly, national)
  *   - UMCSENT: University of Michigan Consumer Sentiment
- *   - STLFSI2: St. Louis Fed Financial Stress Index (weekly)
+ *   - STLFSI4: St. Louis Fed Financial Stress Index (weekly, replaced STLFSI2)
  *   - T10Y3M: 10-Year minus 3-Month Treasury spread (recession signal)
  *
  * Requires FRED_API_KEY environment variable.
@@ -30,7 +30,7 @@ export interface FredMacroData {
   treasury2y?: Record<string, number>;     // DGS2
   joblessClaims?: Record<string, number>;  // ICSA
   consumerSentiment?: Record<string, number>; // UMCSENT
-  financialStress?: Record<string, number>;   // STLFSI2
+  financialStress?: Record<string, number>;   // STLFSI4
   t10y3mSpread?: Record<string, number>;     // T10Y3M
 }
 
@@ -46,7 +46,7 @@ const FRED_SERIES = [
   { id: "DGS2", key: "treasury2y" },
   { id: "ICSA", key: "joblessClaims" },
   { id: "UMCSENT", key: "consumerSentiment" },
-  { id: "STLFSI2", key: "financialStress" },
+  { id: "STLFSI4", key: "financialStress" },
   { id: "T10Y3M", key: "t10y3mSpread" },
 ] as const;
 

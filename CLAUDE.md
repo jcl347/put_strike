@@ -352,7 +352,7 @@ Features computed in both Python (notebook) and TypeScript (website) — must st
 - `DGS2` — 2-Year Treasury Constant Maturity Rate (short-term rate expectations)
 - `ICSA` — Initial Jobless Claims, weekly (labor market health, z-scored over 20d)
 - `UMCSENT` — University of Michigan Consumer Sentiment, monthly (consumer confidence, 20d pct change)
-- `STLFSI2` — St. Louis Fed Financial Stress Index, weekly (composite of 18 financial indicators; 0 = normal, positive = above-average stress)
+- `STLFSI4` — St. Louis Fed Financial Stress Index, weekly (replaced STLFSI2; composite of 18 financial indicators; 0 = normal, positive = above-average stress)
 - `T10Y3M` — 10-Year minus 3-Month Treasury spread (alternative recession indicator, more sensitive than 10Y-2Y; inversion preceded every US recession since 1970)
 
 **Per-stock mappings:**

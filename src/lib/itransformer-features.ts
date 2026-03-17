@@ -137,7 +137,7 @@ export interface MacroData {
   fredTreasury2y?: number[];     // DGS2 2-year Treasury yield
   fredJoblessClaims?: number[];  // ICSA initial jobless claims
   fredConsumerSentiment?: number[]; // UMCSENT UMich consumer sentiment
-  fredFinancialStress?: number[];   // STLFSI2 St. Louis Fed Financial Stress Index
+  fredFinancialStress?: number[];   // STLFSI4 St. Louis Fed Financial Stress Index
   fredT10y3mSpread?: number[];     // T10Y3M 10Y-3M yield spread
 }
 

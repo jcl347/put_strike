@@ -121,7 +121,7 @@ Beyond per-stock OHLCV, the model ingests 28+ data tickers (all free via Yahoo F
 | ^SOX | Philadelphia Semiconductor Index | Chip cycle indicator |
 | HYG, TLT | Credit & Treasury ETFs | Risk appetite, flight to safety |
 | IGV, HACK, KRE, ITA, XOP, IBB, XHB, XRT, LIT, etc. | Stock-specific driver ETFs | Per-company business drivers |
-| STLFSI2, T10Y3M | FRED: Financial Stress, yield spread | Recession signal, systemic risk |
+| STLFSI4, T10Y3M | FRED: Financial Stress, yield spread | Recession signal, systemic risk |
 
 ### Hypotheses
 
