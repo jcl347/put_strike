@@ -435,6 +435,33 @@ iTransformer predictions validate the scoring model's recommendations:
 14. **H14: Value/growth rotation regime improves style-sensitive predictions** — The v9.0 IWF-IWD spread feature should improve predictions during style rotation periods, particularly for growth stocks (tech, software) during value rotations and vice versa.
 15. **H15: Risk appetite indicator improves consumer/defensive predictions** — The v9.0 XLY-XLP spread feature should improve predictions for consumer discretionary (HD, LOW, NKE, SBUX, TGT) and consumer staples (PG, KO, PEP, COST, WMT) stocks by capturing institutional risk appetite shifts.
 
+16. **H16: Feature pruning improves predictions by reducing noise** — Removing 35 features with consistently negative permutation importance across 70%+ of stocks should improve directional accuracy by 1-2 percentage points by reducing the over-parameterization ratio from 175x to ~125x and freeing attention capacity for signal-bearing features. Confirmed by permutation importance analysis: 86% of feature categories have negative mean importance.
+17. **H17: Learnable feature gating achieves per-stock feature selection** — Adding a sigmoid gate layer (with L1 sparsity penalty) that the model learns to zero out irrelevant features should improve per-stock accuracy by 2-5%, especially for stocks where top features explain <1% of MSE (COST, MMM, AMZN). The gate temperature (5.0) creates near-binary gates, and the sparsity penalty (lambda=1e-4) encourages dropping noisy features automatically.
+
+### Feature Pruning (v10.0)
+
+Based on permutation importance analysis across 89 per-stock models, 35 features with consistently negative importance were identified for removal:
+
+**Removed features (35 total):**
+- **Price Action (8)**: price_vs_sma_5/10/20/50/200_pct, price_vs_ema_5/12/26_pct — redundant with SMA cross signals
+- **Momentum (5)**: rsi_7, rsi_21, roc_5/10/20 — redundant within group (keep rsi_14, return_*)
+- **Returns (2)**: return_10d, return_20d — keep 1d, 5d, 60d
+- **Volatility (4)**: volatility_5d/10d/20d/60d — keep garman_klass_vol_20d, parkinson_vol_20d, vol_regime_ratio
+- **Statistical (7)**: zscore_50/100, percentile_rank_20d/60d, skewness_60d, kurtosis_60d, autocorr_lag_3
+- **Other (6)**: atr_7_pct, max_drawdown_20d, rel_return_vs_spy_5d/20d, up_ratio_10d, stock_driver_2_return_20d
+- **Volume (3)**: obv_zscore, vwap_deviation, force_index_13 — Advanced Volume category was worst (-0.000020)
+
+**Remaining features: 119** (configurable via `PRUNE_FEATURES = True/False` in Cell 3)
+
+### Feature Gating (v10.0)
+
+Learnable per-feature gate added to iTransformer architecture:
+- Each feature gets a sigmoid gate (0-1) initialized to ~0.88 (logit=2.0, temperature=5.0)
+- L1 sparsity penalty (`GATE_SPARSITY_LAMBDA=1e-4`) encourages dropping noisy features
+- Gate values are trained alongside model weights — per-stock feature selection happens automatically
+- Active gate count per stock is logged in `per_stock_metrics["active_gates"]`
+- Configurable via `USE_FEATURE_GATE = True/False` in Cell 3
+
 ### Per-Stock Dataset Analysis (v9.0)
 
 Systematic analysis of how v9.0 universal features map to stock-specific prediction improvement. Each feature was evaluated for orthogonality (does it add signal not already captured?) and expected impact by stock category.
