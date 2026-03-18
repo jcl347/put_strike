@@ -275,7 +275,12 @@ Standard Transformers treat time steps as tokens. iTransformer **inverts** this 
 - Shared output projection: `Linear(d_model → horizon=60)`
 - RevIN normalization (instance norm per window, reversed on output)
 
-Config: `d_model=128, n_heads=8, n_layers=3, d_ff=256, dropout=0.15`
+Config: `d_model=128, n_heads=8, n_layers=3, d_ff=384, dropout=0.20`
+
+Architecture is intentionally compact: with only ~2,500 samples per stock, the model is already
+175× over-parameterized (~437K params). The iTransformer paper used d_model=512 on 10K-52K sample
+datasets. Increasing d_model/layers here would worsen overfitting. The model relies on dropout=0.20,
+weight_decay=1e-3, and early stopping (patience=20) for regularization.
 
 ### Feature Engineering (172 features, 137 after pruning)
 
