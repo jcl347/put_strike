@@ -8,7 +8,7 @@ PutStrike is a Next.js 15 app (App Router) that optimizes cash-secured put optio
 
 - `npm run dev` - Start development server
 - `npm run build` - Production build (also runs TypeScript checking and linting)
-- `npx jest` - Run 31 validation tests (scoring model + stability + Black-Scholes accuracy)
+- `npx jest` - Run 34 validation tests (scoring model + stability + Black-Scholes accuracy)
 - `npx jest --watch` - Run tests in watch mode
 
 ## Architecture
@@ -282,7 +282,7 @@ Architecture is intentionally compact: with only ~2,500 samples per stock, the m
 datasets. Increasing d_model/layers here would worsen overfitting. The model relies on dropout=0.20,
 weight_decay=1e-3, and early stopping (patience=20) for regularization.
 
-### Feature Engineering (154 features)
+### Feature Engineering (172 features, 137 after pruning)
 
 Features computed in both Python (notebook) and TypeScript (website) — must stay synchronized:
 
@@ -322,6 +322,12 @@ Features computed in both Python (notebook) and TypeScript (website) — must st
 | **Tail Risk** | 2 | CBOE SKEW level, SKEW 20d z-score (options tail risk pricing) | ^SKEW (Yahoo) |
 | **Style Rotation** | 1 | IWF vs IWD 20d return spread (value/growth rotation regime) | IWF, IWD (Yahoo) |
 | **Risk Appetite** | 1 | XLY vs XLP 20d return spread (consumer discretionary vs staples) | XLY, XLP (Yahoo) |
+| **Analysis-Driven OHLCV** | 7 | RSI divergence 20d, volume-weighted return 5d, trend agreement score, price acceleration 10d, overnight return ratio 20d, Keltner channel position, mean reversion speed 20d | OHLCV |
+| **Analysis-Driven Macro** | 3 | Sector breadth (fraction of sector ETFs bullish), credit-equity divergence speed, VIX term structure momentum | Sector ETFs, HYG, SPY, ^VIX, ^VIX3M |
+| **Analysis-Driven FRED** | 2 | Real interest rate (fed funds - breakeven inflation), financial stress momentum (5d change) | FRED API (DFF, T10YIE, STLFSI4) |
+| **Wikipedia Attention** | 2 | Pageview z-score 20d (retail attention spike), pageview 5d change (attention momentum) | Wikimedia REST API (free, no auth) |
+| **FINRA Short Volume** | 2 | Short volume ratio (daily short vol / total vol), short volume ratio z-score 20d | FINRA Query API (free, no auth) |
+| **Finnhub Insider Sentiment** | 2 | Monthly Share Purchase Ratio (MSPR level), MSPR 3-month momentum | Finnhub API (free tier, 60 req/min) |
 
 **Macro data sources:**
 - `^VIX`, `^VIX3M` — VIX term structure (contango/backwardation signals risk appetite)
@@ -376,6 +382,11 @@ Features computed in both Python (notebook) and TypeScript (website) — must st
 - `SECTOR_ETF_MAP` — Maps each stock to its GICS sector ETF (XLK, XLF, XLV, XLE, XLI, XLY, XLP, XLC). Sector-relative features capture whether a stock is outperforming/underperforming its peers, independent of broad market moves.
 - `INDUSTRY_COMMODITY_MAP` — Maps energy stocks to NG=F, industrials to HG=F, fintech to BTC-USD. Only stocks with strong commodity sensitivity are mapped; unmapped stocks get 0-filled commodity features.
 - `STOCK_SPECIFIC_DRIVERS` — Maps each stock to 2 unique driving assets (primary, secondary) based on company business model and market dynamics. Examples: NVDA→(^SOX, BTC-USD), JPM→(KRE, ^TNX), TSLA→(LIT, QQQ), BA→(ITA, XLI). See `src/lib/itransformer-features.ts` for full mapping. Unmapped stocks get 0-filled driver features.
+
+**Sentiment data sources** (v11.0 — per-stock alternative data):
+- **Wikipedia Pageviews API** (`src/lib/wikipedia.ts`) — Free Wikimedia REST API, no authentication required. Returns daily pageview counts per article since July 2015. Used as a retail attention proxy — pageview spikes correlate with earnings, news, meme stock activity. Maps tickers to Wikipedia article titles via `TICKER_TO_WIKI`. Features: attention z-score (spike detection) and 5d momentum (attention acceleration).
+- **FINRA Short Volume** (`src/lib/finra.ts`) — Free FINRA Query API for daily Reg SHO short sale volume data. Returns short volume / total volume ratio per stock. High short volume signals bearish institutional positioning. Features: raw ratio level and 20d z-score (unusual short activity detection).
+- **Finnhub Insider Sentiment** (`src/lib/finnhub.ts`) — Free tier Finnhub API (60 calls/minute, requires `FINNHUB_API_KEY`). Returns Monthly Share Purchase Ratio (MSPR) measuring insider buying vs selling balance (-100 to +100). 10+ years of historical data per stock. Features: MSPR level (normalized to [-1,1]) and 3-month momentum (insider sentiment shifts). Returns null gracefully when API key not configured.
 
 ### Prediction Horizons
 
@@ -440,6 +451,35 @@ iTransformer predictions validate the scoring model's recommendations:
 14. **H14: Value/growth rotation regime improves style-sensitive predictions** — The v9.0 IWF-IWD spread feature should improve predictions during style rotation periods, particularly for growth stocks (tech, software) during value rotations and vice versa.
 15. **H15: Risk appetite indicator improves consumer/defensive predictions** — The v9.0 XLY-XLP spread feature should improve predictions for consumer discretionary (HD, LOW, NKE, SBUX, TGT) and consumer staples (PG, KO, PEP, COST, WMT) stocks by capturing institutional risk appetite shifts.
 
+16. **H16: Feature pruning improves predictions by reducing noise** — Removing 35 features with consistently negative permutation importance across 70%+ of stocks should improve directional accuracy by 1-2 percentage points by reducing the over-parameterization ratio from 175x to ~125x and freeing attention capacity for signal-bearing features. Confirmed by permutation importance analysis: 86% of feature categories have negative mean importance.
+17. **H17: Learnable feature gating achieves per-stock feature selection** — Adding a sigmoid gate layer (with L1 sparsity penalty) that the model learns to zero out irrelevant features should improve per-stock accuracy by 2-5%, especially for stocks where top features explain <1% of MSE (COST, MMM, AMZN). The gate temperature (5.0) creates near-binary gates, and the sparsity penalty (lambda=1e-4) encourages dropping noisy features automatically.
+18. **H18: Sentiment features from alternative data improve predictions** — The 6 v11.0 sentiment features (Wikipedia pageviews, FINRA short volume, Finnhub insider MSPR) provide genuinely orthogonal signals to OHLCV technicals. Wikipedia pageview spikes detect retail attention events (earnings, memes, controversy) before they fully price in. FINRA short volume ratio captures institutional bearish positioning that volume alone cannot detect. Insider MSPR captures smart money conviction — research shows insider buying predicts positive 30-90 day returns. Expected improvement: 1-3% for stocks with active retail communities (TSLA, AMC, GME, NVDA) and 0.5-1% broadly.
+19. **H19: Importance-analysis-driven features improve signal quality** — The 12 v11.0 features (RSI divergence, volume-weighted returns, trend agreement, price acceleration, overnight return ratio, Keltner channel, mean reversion speed, sector breadth, credit-equity divergence speed, VIX term structure momentum, real interest rate, financial stress momentum) are specifically designed to fill gaps identified by the permutation importance analysis. RSI divergence is orthogonal to RSI level (divergence detects reversals, level detects overbought/oversold). Keltner channels provide ATR-based context that Bollinger Bands' volatility-based channels miss. Sector breadth captures cross-market participation that single-ticker rotation features cannot. Expected improvement: 1-3% directional accuracy for stocks where current features have low explanatory power.
+
+### Feature Pruning (v10.0)
+
+Based on permutation importance analysis across 89 per-stock models, 35 features with consistently negative importance were identified for removal:
+
+**Removed features (35 total):**
+- **Price Action (8)**: price_vs_sma_5/10/20/50/200_pct, price_vs_ema_5/12/26_pct — redundant with SMA cross signals
+- **Momentum (5)**: rsi_7, rsi_21, roc_5/10/20 — redundant within group (keep rsi_14, return_*)
+- **Returns (2)**: return_10d, return_20d — keep 1d, 5d, 60d
+- **Volatility (4)**: volatility_5d/10d/20d/60d — keep garman_klass_vol_20d, parkinson_vol_20d, vol_regime_ratio
+- **Statistical (7)**: zscore_50/100, percentile_rank_20d/60d, skewness_60d, kurtosis_60d, autocorr_lag_3
+- **Other (6)**: atr_7_pct, max_drawdown_20d, rel_return_vs_spy_5d/20d, up_ratio_10d, stock_driver_2_return_20d
+- **Volume (3)**: obv_zscore, vwap_deviation, force_index_13 — Advanced Volume category was worst (-0.000020)
+
+**Remaining features: 137** (172 total - 35 pruned; configurable via `PRUNE_FEATURES = True/False` in Cell 3)
+
+### Feature Gating (v10.0)
+
+Learnable per-feature gate added to iTransformer architecture:
+- Each feature gets a sigmoid gate (0-1) initialized to ~0.88 (logit=2.0, temperature=5.0)
+- L1 sparsity penalty (`GATE_SPARSITY_LAMBDA=1e-4`) encourages dropping noisy features
+- Gate values are trained alongside model weights — per-stock feature selection happens automatically
+- Active gate count per stock is logged in `per_stock_metrics["active_gates"]`
+- Configurable via `USE_FEATURE_GATE = True/False` in Cell 3
+
 ### Per-Stock Dataset Analysis (v9.0)
 
 Systematic analysis of how v9.0 universal features map to stock-specific prediction improvement. Each feature was evaluated for orthogonality (does it add signal not already captured?) and expected impact by stock category.
@@ -480,7 +520,7 @@ Systematic analysis of how v9.0 universal features map to stock-specific predict
 
 - **Colab secrets**: Add `HF_TOKEN`, `HF_REPO_ID`, and `FRED_API_KEY` via the Secrets panel (key icon) in Colab
 - **Training config**: Edit Cell 3 of `colab/train_itransformer.ipynb`
-- **Feature engineering**: Edit `compute_features()` in the notebook AND `src/lib/itransformer-features.ts` (must stay in sync). Also update `src/app/api/forecast/route.ts` macro tickers if adding new data sources. FRED features also require `src/lib/fred.ts` updates. Stock-specific driver mappings in `STOCK_SPECIFIC_DRIVERS` (both files).
+- **Feature engineering**: Edit `compute_features()` in the notebook AND `src/lib/itransformer-features.ts` (must stay in sync). Also update `src/app/api/forecast/route.ts` macro tickers if adding new data sources. FRED features also require `src/lib/fred.ts` updates. Sentiment features require `src/lib/wikipedia.ts`, `src/lib/finra.ts`, and `src/lib/finnhub.ts` updates. Stock-specific driver mappings in `STOCK_SPECIFIC_DRIVERS` (both files).
 - **Feature importance**: Run Cell 9 after training — performs permutation importance analysis per stock, outputs `feature_importance_report.json` for Claude analysis. Requires state dicts saved during training (Cell 7).
 - **Model architecture**: Edit the `iTransformer` class in notebook Cell 6
 - **Website inference**: Edit `src/lib/hf-model.ts`

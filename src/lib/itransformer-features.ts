@@ -1,11 +1,11 @@
 /**
  * iTransformer Feature Engineering — Server-Side
  *
- * Computes the exact 154 features used to train the iTransformer model.
+ * Computes the exact 172 features used to train the iTransformer model.
  * Must stay in sync with compute_features() in colab/train_itransformer.ipynb.
  *
  * Input: OHLCV daily data (need 260+ days for warmup)
- * Output: (numDays, 154) feature matrix for the available days
+ * Output: (numDays, 166) feature matrix for the available days
  *
  * Features 0-82: Original technicals + macro (SMA/EMA, RSI, MACD, BB, ATR,
  *   volume, stochastic, ROC, CCI, Aroon, returns, volatility, moments,
@@ -35,6 +35,18 @@
  * Features 150-151: CBOE SKEW — tail risk level, tail risk z-score
  * Features 152: Value/growth rotation — IWF vs IWD 20d spread
  * Features 153: Risk appetite — XLY vs XLP 20d spread
+ * Features 154-160: Importance-analysis-driven OHLCV features — RSI divergence,
+ *   volume-weighted returns, trend agreement, price acceleration, overnight
+ *   return ratio, Keltner channel position, mean reversion speed
+ * Features 161-163: Importance-analysis-driven macro features — sector breadth,
+ *   credit-equity divergence speed, VIX term structure momentum
+ * Features 164-165: Importance-analysis-driven FRED features — real interest
+ *   rate, financial stress momentum
+ * Features 166-167: Wikipedia pageview sentiment — retail attention z-score,
+ *   attention momentum (5d change)
+ * Features 168-169: FINRA short volume sentiment — short volume ratio,
+ *   short volume ratio z-score
+ * Features 170-171: Finnhub insider sentiment — MSPR level, MSPR 3-month momentum
  */
 
 export const FEATURE_NAMES = [
@@ -107,6 +119,19 @@ export const FEATURE_NAMES = [
   // Tail risk & style rotation (150-153)
   "skew_level", "skew_zscore_20",
   "value_growth_spread_20d", "risk_appetite_ratio_20d",
+  // Importance-analysis-driven OHLCV features (154-160)
+  "rsi_divergence_20d", "volume_weighted_return_5d", "trend_agreement_score",
+  "price_acceleration_10d", "overnight_return_ratio_20d",
+  "keltner_channel_position", "mean_reversion_speed_20d",
+  // Importance-analysis-driven macro features (161-163)
+  "sector_breadth_bullish", "credit_equity_divergence_speed",
+  "vix_term_structure_momentum",
+  // Importance-analysis-driven FRED features (164-165)
+  "real_interest_rate", "financial_stress_momentum",
+  // Sentiment features (166-171)
+  "wiki_attention_zscore_20d", "wiki_attention_change_5d",
+  "short_volume_ratio", "short_volume_ratio_zscore_20d",
+  "insider_mspr", "insider_mspr_momentum_3m",
 ] as const;
 
 export interface OHLCV {
@@ -158,6 +183,12 @@ export interface MacroData {
   iwd?: number[];         // IWD Russell 1000 Value ETF
   xly?: number[];         // XLY Consumer Discretionary SPDR
   xlp?: number[];         // XLP Consumer Staples SPDR
+  // Sector breadth (v11.0) — all sector ETFs for breadth calculation
+  sectorEtfs?: Record<string, number[]>;  // Map of ETF symbol -> daily closes (XLK, XLF, XLV, XLE, XLI, XLY, XLP, XLC, XLB)
+  // Sentiment features (v11.0)
+  wikiPageviews?: number[];     // Daily Wikipedia pageviews for company article (retail attention)
+  shortVolumeRatio?: number[];  // FINRA daily short volume / total volume (institutional sentiment)
+  insiderMspr?: number[];       // Finnhub Monthly Share Purchase Ratio (insider sentiment, forward-filled)
 }
 
 /**
@@ -387,8 +418,8 @@ function linearSlope(arr: number[]): number {
 }
 
 /**
- * Compute 146 features for each day of the OHLCV array.
- * Returns a 2D array: [numDays][146]
+ * Compute 172 features for each day of the OHLCV array.
+ * Returns a 2D array: [numDays][166]
  * Days with insufficient warmup data get 0-filled features.
  */
 export function computeITransformerFeatures(
@@ -634,7 +665,7 @@ export function computeITransformerFeatures(
   const result: number[][] = [];
 
   for (let i = 0; i < n; i++) {
-    const row: number[] = new Array(154).fill(0);
+    const row: number[] = new Array(172).fill(0);
     const c = close[i];
     const dt = dates[i];
 
@@ -1368,8 +1399,217 @@ export function computeITransformerFeatures(
       row[153] = xlyReturn - xlpReturn; // positive = risk-on, negative = risk-off
     }
 
+    // ── 154: RSI Divergence (20d) ──
+    // Detects price making new highs while RSI declines (bearish divergence) or vice versa
+    // Output: -1 (bearish divergence), 0 (no divergence), +1 (bullish divergence)
+    if (i >= 20 && rsi14[i] != null && rsi14[i - 20] != null) {
+      const priceChange = close[i] - close[i - 20];
+      const rsiChange = (rsi14[i] ?? 50) - (rsi14[i - 20] ?? 50);
+      // Bearish: price up significantly but RSI down
+      if (priceChange > 0 && close[i - 20] > 0 && priceChange / close[i - 20] > 0.02 && rsiChange < -5) {
+        row[154] = -1;
+      // Bullish: price down significantly but RSI up
+      } else if (priceChange < 0 && close[i - 20] > 0 && priceChange / close[i - 20] < -0.02 && rsiChange > 5) {
+        row[154] = 1;
+      }
+    }
+
+    // ── 155: Volume-Weighted Return (5d) ──
+    // 5d return weighted by average relative volume over that period
+    if (i >= 5 && close[i - 5] > 0 && vol20[i] != null) {
+      const ret5 = (close[i] - close[i - 5]) / close[i - 5];
+      let relVolSum = 0;
+      for (let j = i - 4; j <= i; j++) {
+        relVolSum += volume[j] / ((vol20[j] as number ?? volume[j]) + 1);
+      }
+      const avgRelVol = relVolSum / 5;
+      row[155] = ret5 * avgRelVol;
+    }
+
+    // ── 156: Trend Agreement Score ──
+    // Fraction of SMA timeframes (5, 20, 50, 200) where price is above SMA
+    // 1.0 = all bullish, 0.0 = all bearish, 0.5 = mixed
+    {
+      let agreements = 0;
+      let total = 0;
+      if (sma5[i] != null) { total++; if (close[i] > sma5[i]!) agreements++; }
+      if (sma20[i] != null) { total++; if (close[i] > sma20[i]!) agreements++; }
+      if (sma50[i] != null) { total++; if (close[i] > sma50[i]!) agreements++; }
+      if (sma200[i] != null) { total++; if (close[i] > sma200[i]!) agreements++; }
+      row[156] = total > 0 ? agreements / total : 0.5;
+    }
+
+    // ── 157: Price Acceleration (10d) ──
+    // 2nd derivative: (5d return now) - (5d return 5 days ago)
+    // Positive = accelerating up, negative = decelerating or accelerating down
+    if (i >= 10 && close[i - 5] > 0 && close[i - 10] > 0) {
+      const ret5Now = (close[i] - close[i - 5]) / close[i - 5];
+      const ret5Prev = (close[i - 5] - close[i - 10]) / close[i - 10];
+      row[157] = ret5Now - ret5Prev;
+    }
+
+    // ── 158: Overnight Return Ratio (20d) ──
+    // Fraction of 20d total return that comes from overnight gaps
+    // High ratio = institutional/news-driven; low ratio = intraday/retail-driven
+    if (i >= 20) {
+      let overnightSum = 0;
+      let totalRetSum = 0;
+      for (let j = i - 19; j <= i; j++) {
+        if (j >= 1) {
+          const overnightRet = Math.abs(open[j] - close[j - 1]);
+          const totalRet = Math.abs(close[j] - close[j - 1]);
+          overnightSum += overnightRet;
+          totalRetSum += totalRet;
+        }
+      }
+      row[158] = totalRetSum > 0 ? overnightSum / totalRetSum : 0.5;
+    }
+
+    // ── 159: Keltner Channel Position ──
+    // Position within ATR-based Keltner Channel (different from Bollinger's vol-based)
+    // 0 = at lower band, 0.5 = at middle (EMA), 1 = at upper band
+    if (i >= 19 && atr14[i] != null) {
+      const midline = ema12[i]; // Use 12-period EMA as center
+      const upperKC = midline + 2 * atr14[i]!;
+      const lowerKC = midline - 2 * atr14[i]!;
+      const kcWidth = upperKC - lowerKC;
+      row[159] = kcWidth > 0 ? (close[i] - lowerKC) / kcWidth : 0.5;
+    }
+
+    // ── 160: Mean Reversion Speed (20d) ──
+    // How quickly price reverts to 20d SMA after deviation
+    // Computed as correlation between deviation and next-day return over 20d window
+    if (i >= 20 && closeMean20[i] != null && closeStd20[i] != null) {
+      const deviations: number[] = [];
+      const nextReturns: number[] = [];
+      for (let j = i - 19; j < i; j++) {
+        if (closeMean20[j] != null && closeStd20[j] != null && (closeStd20[j] as number) > 0) {
+          deviations.push((close[j] - (closeMean20[j] as number)) / ((closeStd20[j] as number) + 1e-10));
+          nextReturns.push(j + 1 < n ? (close[j + 1] - close[j]) / (close[j] + 1e-10) : 0);
+        }
+      }
+      if (deviations.length >= 10) {
+        // Negative correlation = mean-reverting; positive = trending
+        const mDev = deviations.reduce((a, b) => a + b, 0) / deviations.length;
+        const mRet = nextReturns.reduce((a, b) => a + b, 0) / nextReturns.length;
+        let cov = 0, vDev = 0, vRet = 0;
+        for (let k = 0; k < deviations.length; k++) {
+          const dd = deviations[k] - mDev;
+          const dr = nextReturns[k] - mRet;
+          cov += dd * dr;
+          vDev += dd * dd;
+          vRet += dr * dr;
+        }
+        const denom = Math.sqrt(vDev * vRet) + 1e-10;
+        row[160] = cov / denom; // negative = mean-reverting, positive = trending
+      }
+    }
+
+    // ── 161: Sector Breadth — Bullish ──
+    // Fraction of sector ETFs with positive 20d returns (market breadth)
+    if (macro?.sectorEtfs && i >= 20) {
+      const etfKeys = Object.keys(macro.sectorEtfs);
+      let bullCount = 0;
+      let totalCount = 0;
+      for (const key of etfKeys) {
+        const etfData = macro.sectorEtfs[key];
+        if (etfData && etfData[i] > 0 && etfData[i - 20] > 0) {
+          totalCount++;
+          if (etfData[i] > etfData[i - 20]) bullCount++;
+        }
+      }
+      row[161] = totalCount > 0 ? bullCount / totalCount : 0.5;
+    }
+
+    // ── 162: Credit-Equity Divergence Speed ──
+    // 5d rate of change of HYG-SPY divergence — fast divergence signals regime change
+    if (macro?.hyg && macro?.spy && i >= 25 && macro.hyg[i - 5] > 0 && macro.spy[i - 5] > 0 &&
+        macro.hyg[i - 20] > 0 && macro.spy[i - 20] > 0 && macro.hyg[i - 25] > 0 && macro.spy[i - 25] > 0) {
+      const hygRetNow = (macro.hyg[i] - macro.hyg[i - 20]) / macro.hyg[i - 20];
+      const spyRetNow = (macro.spy[i] - macro.spy[i - 20]) / macro.spy[i - 20];
+      const divNow = hygRetNow - spyRetNow;
+
+      const hygRetPrev = (macro.hyg[i - 5] - macro.hyg[i - 25]) / macro.hyg[i - 25];
+      const spyRetPrev = (macro.spy[i - 5] - macro.spy[i - 25]) / macro.spy[i - 25];
+      const divPrev = hygRetPrev - spyRetPrev;
+
+      row[162] = divNow - divPrev; // positive = divergence widening (risk-off accelerating)
+    }
+
+    // ── 163: VIX Term Structure Momentum ──
+    // 5d change in VIX3M/VIX contango ratio
+    // Rising = increasing backwardation expectation; falling = normalizing
+    if (macro?.vix && macro?.vix3m && i >= 5 &&
+        macro.vix[i] > 0 && macro.vix[i - 5] > 0 &&
+        macro.vix3m[i] > 0 && macro.vix3m[i - 5] > 0) {
+      const ratioNow = macro.vix3m[i] / macro.vix[i];
+      const ratioPrev = macro.vix3m[i - 5] / macro.vix[i - 5];
+      row[163] = ratioNow - ratioPrev;
+    }
+
+    // ── 164: Real Interest Rate ──
+    // Fed funds rate minus breakeven inflation — actual monetary tightening measure
+    if (macro?.fredFedFundsRate && macro?.fredBreakeven) {
+      const ffr = macro.fredFedFundsRate[i] ?? 0;
+      const bei = macro.fredBreakeven[i] ?? 0;
+      if (ffr > 0 && bei > 0) {
+        row[164] = ffr - bei; // positive = restrictive, negative = accommodative
+      }
+    }
+
+    // ── 165: Financial Stress Momentum ──
+    // 5d change in STLFSI4 — speed of stress change matters more than level
+    if (macro?.fredFinancialStress && i >= 5) {
+      const stressNow = macro.fredFinancialStress[i] ?? 0;
+      const stressPrev = macro.fredFinancialStress[i - 5] ?? 0;
+      row[165] = stressNow - stressPrev; // positive = stress increasing
+    }
+
+    // ── 166-167: Wikipedia Pageview Sentiment — Retail Attention Proxy ──
+    if (macro?.wikiPageviews) {
+      const pv = macro.wikiPageviews[i] ?? 0;
+      // Z-score of pageviews over 20d window
+      if (i >= 19) {
+        const pvSlice = macro.wikiPageviews.slice(i - 19, i + 1).filter(v => v > 0);
+        if (pvSlice.length >= 5) {
+          const pvMean = pvSlice.reduce((a, b) => a + b, 0) / pvSlice.length;
+          const pvStd = Math.sqrt(pvSlice.reduce((a, b) => a + (b - pvMean) ** 2, 0) / pvSlice.length) + 1e-10;
+          row[166] = (pv - pvMean) / pvStd;
+        }
+      }
+      // 5d change in pageviews (momentum of attention)
+      if (i >= 5 && macro.wikiPageviews[i - 5] > 0) {
+        row[167] = (pv - macro.wikiPageviews[i - 5]) / macro.wikiPageviews[i - 5];
+      }
+    }
+
+    // ── 168-169: FINRA Short Volume Sentiment — Institutional Positioning ──
+    if (macro?.shortVolumeRatio) {
+      const svr = macro.shortVolumeRatio[i] ?? 0;
+      row[168] = svr; // raw ratio (typically 0.3-0.6)
+      // Z-score over 20d window
+      if (i >= 19) {
+        const svrSlice = macro.shortVolumeRatio.slice(i - 19, i + 1).filter(v => v > 0);
+        if (svrSlice.length >= 5) {
+          const svrMean = svrSlice.reduce((a, b) => a + b, 0) / svrSlice.length;
+          const svrStd = Math.sqrt(svrSlice.reduce((a, b) => a + (b - svrMean) ** 2, 0) / svrSlice.length) + 1e-10;
+          row[169] = (svr - svrMean) / svrStd;
+        }
+      }
+    }
+
+    // ── 170-171: Finnhub Insider Sentiment — Smart Money Proxy ──
+    if (macro?.insiderMspr) {
+      const mspr = macro.insiderMspr[i] ?? 0;
+      row[170] = mspr / 100; // Normalize to [-1, 1] range
+      // 3-month (~63 trading days) momentum
+      if (i >= 63 && macro.insiderMspr[i - 63] != null) {
+        row[171] = (mspr - (macro.insiderMspr[i - 63] ?? 0)) / 100;
+      }
+    }
+
     // Replace NaN/Infinity
-    for (let f = 0; f < 154; f++) {
+    for (let f = 0; f < 172; f++) {
       if (!isFinite(row[f])) row[f] = 0;
     }
 

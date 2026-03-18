@@ -9,6 +9,9 @@ import {
   type MacroData,
 } from "@/lib/itransformer-features";
 import { fetchFredMacroData, type FredMacroData } from "@/lib/fred";
+import { fetchWikiPageviews } from "@/lib/wikipedia";
+import { fetchShortVolumeRatio } from "@/lib/finra";
+import { fetchInsiderSentiment } from "@/lib/finnhub";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -17,10 +20,10 @@ export const maxDuration = 30;
 
 /**
  * Forecast feature endpoint.
- * Computes the 154 iTransformer features from OHLCV + macro + sector/credit +
- * gamma squeeze + sentiment + stock-specific driver data, normalizes them using
- * per-stock stats from HuggingFace model config, and returns a ready-to-use
- * feature matrix for client-side ONNX inference.
+ * Computes the 166 iTransformer features from OHLCV + macro + sector/credit +
+ * gamma squeeze + sentiment + stock-specific driver + importance-analysis-driven
+ * data, normalizes them using per-stock stats from HuggingFace model config,
+ * and returns a ready-to-use feature matrix for client-side ONNX inference.
  *
  * GET /api/forecast?symbol=AAPL
  */
@@ -38,11 +41,14 @@ export async function GET(request: NextRequest) {
   const stockDrivers = STOCK_SPECIFIC_DRIVERS[upperSymbol];
 
   try {
-    // Fetch OHLCV (1 year) + macro data + FRED data in parallel
-    const [ohlcv, rawMacro, fredData] = await Promise.all([
+    // Fetch OHLCV (1 year) + macro data + FRED data + sentiment data in parallel
+    const [ohlcv, rawMacro, fredData, wikiData, shortVolData, insiderData] = await Promise.all([
       fetchOHLCV(upperSymbol, 1),
       fetchMacroDataWithDates(sectorEtfSymbol, industryCommoditySymbol, stockDrivers),
       fetchFredMacroData(),
+      fetchWikiPageviews(upperSymbol).catch(() => null),
+      fetchShortVolumeRatio(upperSymbol).catch(() => null),
+      fetchInsiderSentiment(upperSymbol).catch(() => null),
     ]);
 
     if (ohlcv.length < 70) {
@@ -57,7 +63,12 @@ export async function GET(request: NextRequest) {
     const stockDates = ohlcv.map(d => d.date);
     const macroData = alignMacroToStockDates(rawMacro, stockDates, fredData);
 
-    // Compute 154 features for all available days
+    // Align sentiment data to stock dates (forward-fill)
+    if (wikiData) macroData.wikiPageviews = alignSentimentToStockDates(wikiData, stockDates);
+    if (shortVolData) macroData.shortVolumeRatio = alignSentimentToStockDates(shortVolData, stockDates);
+    if (insiderData) macroData.insiderMspr = alignSentimentToStockDates(insiderData, stockDates);
+
+    // Compute 172 features for all available days
     const rawFeatures = computeITransformerFeatures(ohlcv, macroData);
 
     // Fetch normalization stats from HuggingFace model config
@@ -169,6 +180,8 @@ interface RawMacroData {
   iwd?: Record<string, number>;
   xly?: Record<string, number>;
   xlp?: Record<string, number>;
+  // v11.0: sector breadth ETFs
+  sectorEtfs?: Record<string, Record<string, number>>;
 }
 
 /**
@@ -214,6 +227,14 @@ async function fetchMacroDataWithDates(
     { symbol: "IWD", key: "iwd" },
     { symbol: "XLY", key: "xly" },
     { symbol: "XLP", key: "xlp" },
+    // v11.0: sector breadth ETFs (for breadth feature)
+    { symbol: "XLK", key: "sectorEtf_XLK" },
+    { symbol: "XLF", key: "sectorEtf_XLF" },
+    { symbol: "XLV", key: "sectorEtf_XLV" },
+    { symbol: "XLE", key: "sectorEtf_XLE" },
+    { symbol: "XLI", key: "sectorEtf_XLI" },
+    { symbol: "XLC", key: "sectorEtf_XLC" },
+    { symbol: "XLB", key: "sectorEtf_XLB" },
   ];
 
   // Add per-stock sector ETF if mapped (avoid duplicates with SPY)
@@ -284,7 +305,14 @@ async function fetchMacroDataWithDates(
 
   for (const r of results) {
     if (r.status === "fulfilled") {
-      (macro as any)[r.value.key] = r.value.dateMap;
+      const { key, dateMap } = r.value;
+      // Collect sector ETF breadth data into nested object
+      if (key.startsWith("sectorEtf_")) {
+        if (!macro.sectorEtfs) macro.sectorEtfs = {};
+        macro.sectorEtfs[key.replace("sectorEtf_", "")] = dateMap;
+      } else {
+        (macro as any)[key] = dateMap;
+      }
     }
   }
 
@@ -356,6 +384,15 @@ function alignMacroToStockDates(
   aligned.xly = forwardFillAlign(rawMacro.xly);
   aligned.xlp = forwardFillAlign(rawMacro.xlp);
 
+  // v11.0: sector breadth ETFs
+  if (rawMacro.sectorEtfs) {
+    aligned.sectorEtfs = {};
+    for (const [etfSymbol, dateMap] of Object.entries(rawMacro.sectorEtfs)) {
+      const arr = forwardFillAlign(dateMap);
+      if (arr) aligned.sectorEtfs[etfSymbol] = arr;
+    }
+  }
+
   // FRED macro data alignment
   if (fredData) {
     aligned.fredHySpread = forwardFillAlign(fredData.hySpread);
@@ -401,6 +438,31 @@ async function fetchNormStats(
   } catch {
     return null;
   }
+}
+
+/**
+ * Align sentiment data (date -> value map) to stock trading dates using forward-fill.
+ * Same approach as forwardFillAlign but for standalone sentiment data.
+ */
+function alignSentimentToStockDates(
+  dateMap: Record<string, number>,
+  stockDates: string[]
+): number[] {
+  const result: number[] = [];
+  let lastValue = 0;
+  const sentDates = Object.keys(dateMap).sort();
+  let sentIdx = 0;
+
+  for (const stockDate of stockDates) {
+    while (sentIdx < sentDates.length - 1 && sentDates[sentIdx + 1] <= stockDate) {
+      sentIdx++;
+    }
+    if (sentIdx < sentDates.length && sentDates[sentIdx] <= stockDate) {
+      lastValue = dateMap[sentDates[sentIdx]];
+    }
+    result.push(lastValue);
+  }
+  return result;
 }
 
 function getAggregateStats(
