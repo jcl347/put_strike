@@ -1190,12 +1190,12 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
 
       {/* Trade List */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
           <h3 className="text-sm font-medium text-gray-400">Trade History</h3>
           <div className="flex items-center gap-2">
             <div className="flex gap-1">
               {(["all", "OPEN", "closed"] as const).map((f) => (
-                <button key={f} onClick={() => setFilter(f)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${filter === f ? "bg-blue-600 text-white" : "bg-gray-700 text-gray-400 hover:text-white"}`}>
+                <button key={f} onClick={() => setFilter(f)} className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${filter === f ? "bg-blue-600 text-white" : "bg-gray-700 text-gray-400 hover:text-white"}`}>
                   {f === "all" ? "All" : f === "OPEN" ? "Open" : "Closed"}
                 </button>
               ))}
@@ -1203,7 +1203,7 @@ export default function TradesDashboard({ refreshKey }: TradesDashboardProps) {
             {trades.length > 0 && (
               <button
                 onClick={() => setShowResetConfirm(true)}
-                className="px-3 py-1 rounded text-xs font-medium bg-gray-700 text-red-400 hover:bg-red-900/40 hover:text-red-300 transition-colors"
+                className="px-3 py-1.5 rounded text-xs font-medium bg-gray-700 text-red-400 hover:bg-red-900/40 hover:text-red-300 transition-colors"
                 title="Delete all trades and capital events"
               >
                 Reset All
@@ -1319,7 +1319,7 @@ function TradeCard({ trade, onClose, onRoll, onDelete, deleting, livePrice }: { 
 
   return (
     <div className={`rounded-lg border p-3 ${targetHit ? "bg-green-900/30 border-green-700/40" : stopHit ? "bg-red-900/30 border-red-700/40" : sc.bg}`}>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-white font-bold">{trade.symbol}</span>
@@ -1341,7 +1341,7 @@ function TradeCard({ trade, onClose, onRoll, onDelete, deleting, livePrice }: { 
 
           {/* Live prices for open trades */}
           {isOpen && livePrice && (
-            <div className="flex items-center gap-4 mt-1.5">
+            <div className="flex items-center gap-2 sm:gap-4 flex-wrap mt-1.5">
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] text-gray-600">Stock:</span>
                 <span className={`text-xs font-medium ${isItm ? "text-orange-400" : "text-white"}`}>${livePrice.stockPrice.toFixed(2)}</span>
@@ -1403,7 +1403,7 @@ function TradeCard({ trade, onClose, onRoll, onDelete, deleting, livePrice }: { 
           )}
         </div>
 
-        <div className="flex items-center gap-2 ml-3 shrink-0">
+        <div className="flex items-center gap-2 sm:ml-3 shrink-0">
           {pnl !== null && (
             <div className="text-right mr-1">
               <div className={`font-bold ${pnl >= 0 ? "text-green-400" : "text-red-400"}`}>{pnl >= 0 ? "+" : ""}${pnl.toFixed(0)}</div>

@@ -211,133 +211,130 @@ export default function Top10Puts({ puts, onTradeSimulated }: Top10PutsProps) {
               }`}
               onClick={() => setExpandedRow(isExpanded ? null : i)}
             >
-              {/* Main row */}
-              <div className="flex items-center gap-3 p-3">
-                {/* Rank */}
-                <div className="w-8 text-center">
-                  <span
-                    className={`text-lg font-bold ${
-                      i < 3 ? "text-yellow-400" : "text-gray-500"
-                    }`}
-                  >
-                    {i + 1}
-                  </span>
-                </div>
-
-                {/* Score — prominent */}
-                <div className="w-16">
-                  <div
-                    className={`text-2xl font-bold ${
-                      put.score >= 75
-                        ? "text-green-400"
-                        : put.score >= 55
-                        ? "text-blue-400"
-                        : "text-yellow-400"
-                    }`}
-                  >
-                    {put.score.toFixed(0)}
-                  </div>
-                  <div className="text-[10px] text-gray-600">score</div>
-                </div>
-
-                {/* Symbol & Company + checklist verdict */}
-                <div className="w-36 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-white font-bold">{put.symbol}</span>
-                    {summary && (
-                      <span className={`text-xs font-bold ${verdictIcons[summary.verdict].color}`} title={`${summary.passes}/${summary.items.length} checks pass`}>
-                        {verdictIcons[summary.verdict].icon}
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-xs text-gray-500 truncate">
-                    {put.companyName}
-                  </div>
-                </div>
-
-                {/* Recommendation */}
-                <div className="w-28">
-                  <span
-                    className={`px-2 py-0.5 rounded text-xs font-medium ${colors.bg} ${colors.text}`}
-                  >
-                    {recLabels[put.recommendation] ?? put.recommendation}
-                  </span>
-                </div>
-
-                {/* Key checklist flags */}
-                <div className="w-40 hidden lg:flex items-center gap-1 flex-wrap">
-                  {summary?.flags.slice(0, 3).map((flag, fi) => (
-                    <span
-                      key={fi}
-                      className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${flagColors[flag.status]}`}
-                    >
-                      {flag.short}
+              {/* Main row — desktop: single flex row; mobile: stacked compact layout */}
+              <div className="p-3">
+                {/* Desktop layout (md+) */}
+                <div className="hidden md:flex items-center gap-3">
+                  {/* Rank */}
+                  <div className="w-8 text-center">
+                    <span className={`text-lg font-bold ${i < 3 ? "text-yellow-400" : "text-gray-500"}`}>
+                      {i + 1}
                     </span>
-                  ))}
-                  {!summary && (
-                    <span className="text-[10px] text-gray-600">No context</span>
-                  )}
+                  </div>
+
+                  {/* Score */}
+                  <div className="w-16">
+                    <div className={`text-2xl font-bold ${put.score >= 75 ? "text-green-400" : put.score >= 55 ? "text-blue-400" : "text-yellow-400"}`}>
+                      {put.score.toFixed(0)}
+                    </div>
+                    <div className="text-[10px] text-gray-600">score</div>
+                  </div>
+
+                  {/* Symbol & Company */}
+                  <div className="w-36 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-white font-bold">{put.symbol}</span>
+                      {summary && (
+                        <span className={`text-xs font-bold ${verdictIcons[summary.verdict].color}`} title={`${summary.passes}/${summary.items.length} checks pass`}>
+                          {verdictIcons[summary.verdict].icon}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-500 truncate">{put.companyName}</div>
+                  </div>
+
+                  {/* Recommendation */}
+                  <div className="w-28">
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${colors.bg} ${colors.text}`}>
+                      {recLabels[put.recommendation] ?? put.recommendation}
+                    </span>
+                  </div>
+
+                  {/* Key checklist flags */}
+                  <div className="w-40 hidden lg:flex items-center gap-1 flex-wrap">
+                    {summary?.flags.slice(0, 3).map((flag, fi) => (
+                      <span key={fi} className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${flagColors[flag.status]}`}>
+                        {flag.short}
+                      </span>
+                    ))}
+                    {!summary && <span className="text-[10px] text-gray-600">No context</span>}
+                  </div>
+
+                  {/* Strike & Exp */}
+                  <div className="w-28 text-sm">
+                    <div className="text-white font-medium">${put.strikePrice.toFixed(0)} put</div>
+                    <div className="text-gray-500 text-xs">{put.expiration} ({put.dte}d)</div>
+                  </div>
+
+                  {/* Premium */}
+                  <div className="w-20 text-sm">
+                    <div className="text-green-400 font-medium">${midPrice.toFixed(2)}</div>
+                    <div className="text-gray-500 text-xs">premium</div>
+                  </div>
+
+                  {/* Annualized Return */}
+                  <div className="w-20 text-sm">
+                    <div className={`font-medium ${put.annualizedReturn >= 10 ? "text-green-400" : "text-yellow-400"}`}>
+                      {put.annualizedReturn.toFixed(1)}%
+                    </div>
+                    <div className="text-gray-500 text-xs">annualized</div>
+                  </div>
+
+                  {/* Stability */}
+                  <div className="w-20 text-sm">
+                    <div className={`font-medium ${put.stabilityScore >= 70 ? "text-green-400" : put.stabilityScore >= 50 ? "text-yellow-400" : "text-red-400"}`}>
+                      {put.stabilityScore.toFixed(0)}/100
+                    </div>
+                    <div className="text-gray-500 text-xs">stability</div>
+                  </div>
+
+                  {/* Delta */}
+                  <div className="w-16 text-sm hidden lg:block">
+                    <div className="text-gray-400">{Math.abs(put.delta).toFixed(2)}</div>
+                    <div className="text-gray-600 text-[10px]">delta</div>
+                  </div>
+
+                  {/* Expand */}
+                  <div className="w-6 text-gray-500 text-sm ml-auto">
+                    {isExpanded ? "\u25B2" : "\u25BC"}
+                  </div>
                 </div>
 
-                {/* Strike & Exp */}
-                <div className="w-28 text-sm">
-                  <div className="text-white font-medium">
-                    ${put.strikePrice.toFixed(0)} put
+                {/* Mobile layout (<md) */}
+                <div className="md:hidden">
+                  {/* Row 1: Rank + Score + Symbol + Rec + Expand */}
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span className={`text-sm font-bold ${i < 3 ? "text-yellow-400" : "text-gray-500"}`}>
+                      {i + 1}
+                    </span>
+                    <span className={`text-xl font-bold ${put.score >= 75 ? "text-green-400" : put.score >= 55 ? "text-blue-400" : "text-yellow-400"}`}>
+                      {put.score.toFixed(0)}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1">
+                        <span className="text-white font-bold text-sm">{put.symbol}</span>
+                        {summary && (
+                          <span className={`text-xs font-bold ${verdictIcons[summary.verdict].color}`}>
+                            {verdictIcons[summary.verdict].icon}
+                          </span>
+                        )}
+                        <span className={`ml-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${colors.bg} ${colors.text}`}>
+                          {recLabels[put.recommendation] ?? put.recommendation}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-gray-500 truncate">{put.companyName}</div>
+                    </div>
+                    <span className="text-gray-500 text-sm">{isExpanded ? "\u25B2" : "\u25BC"}</span>
                   </div>
-                  <div className="text-gray-500 text-xs">
-                    {put.expiration} ({put.dte}d)
-                  </div>
-                </div>
 
-                {/* Premium */}
-                <div className="w-20 text-sm">
-                  <div className="text-green-400 font-medium">
-                    ${midPrice.toFixed(2)}
+                  {/* Row 2: Key metrics in flex-wrap */}
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-400 pl-6">
+                    <span><span className="text-white font-medium">${put.strikePrice.toFixed(0)}</span> put</span>
+                    <span><span className="text-green-400 font-medium">${midPrice.toFixed(2)}</span> prem</span>
+                    <span><span className={`font-medium ${put.annualizedReturn >= 10 ? "text-green-400" : "text-yellow-400"}`}>{put.annualizedReturn.toFixed(1)}%</span> ann</span>
+                    <span><span className={`font-medium ${put.stabilityScore >= 70 ? "text-green-400" : put.stabilityScore >= 50 ? "text-yellow-400" : "text-red-400"}`}>{put.stabilityScore.toFixed(0)}</span> stab</span>
+                    <span>{put.dte}d · δ{Math.abs(put.delta).toFixed(2)}</span>
                   </div>
-                  <div className="text-gray-500 text-xs">premium</div>
-                </div>
-
-                {/* Annualized Return */}
-                <div className="w-20 text-sm">
-                  <div
-                    className={`font-medium ${
-                      put.annualizedReturn >= 10
-                        ? "text-green-400"
-                        : "text-yellow-400"
-                    }`}
-                  >
-                    {put.annualizedReturn.toFixed(1)}%
-                  </div>
-                  <div className="text-gray-500 text-xs">annualized</div>
-                </div>
-
-                {/* Stability */}
-                <div className="w-20 text-sm">
-                  <div
-                    className={`font-medium ${
-                      put.stabilityScore >= 70
-                        ? "text-green-400"
-                        : put.stabilityScore >= 50
-                        ? "text-yellow-400"
-                        : "text-red-400"
-                    }`}
-                  >
-                    {put.stabilityScore.toFixed(0)}/100
-                  </div>
-                  <div className="text-gray-500 text-xs">stability</div>
-                </div>
-
-                {/* Delta — properly formatted */}
-                <div className="w-16 text-sm hidden md:block">
-                  <div className="text-gray-400">
-                    {Math.abs(put.delta).toFixed(2)}
-                  </div>
-                  <div className="text-gray-600 text-[10px]">delta</div>
-                </div>
-
-                {/* Expand */}
-                <div className="w-6 text-gray-500 text-sm ml-auto">
-                  {isExpanded ? "\u25B2" : "\u25BC"}
                 </div>
               </div>
 
@@ -355,7 +352,7 @@ export default function Top10Puts({ puts, onTradeSimulated }: Top10PutsProps) {
                           {summary.passes} pass, {summary.warns} caution, {summary.fails} fail
                         </span>
                       </div>
-                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-1.5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-1.5">
                         {summary.items.map((item, idx) => (
                           <div key={idx} className="flex items-center gap-1.5 text-xs">
                             <span className={`font-bold ${

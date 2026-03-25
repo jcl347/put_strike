@@ -548,14 +548,15 @@ export default function Home() {
       {/* Header */}
       <header className="mb-6">
         <div className="flex items-center gap-3 mb-2">
-          <h1 className="text-3xl font-bold text-white">PutStrike</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-white">PutStrike</h1>
           <span className="text-xs bg-blue-600/20 text-blue-400 px-2 py-0.5 rounded-full border border-blue-500/30">
             Research-Backed
           </span>
         </div>
-        <p className="text-gray-400 max-w-2xl">
-          Optimize cash-secured put sales using live market data, company stability analysis,
-          and research-validated scoring (tastytrade, DataDrivenOptions, CBOE research).
+        <p className="text-gray-400 max-w-2xl text-sm sm:text-base">
+          <span className="hidden sm:inline">Optimize cash-secured put sales using live market data, company stability analysis,
+          and research-validated scoring (tastytrade, DataDrivenOptions, CBOE research).</span>
+          <span className="sm:hidden">Optimize cash-secured put sales with live data and research-validated scoring.</span>
         </p>
       </header>
 
@@ -607,52 +608,52 @@ export default function Home() {
       {/* Search & Actions */}
       <div className="mb-6 space-y-3">
         <SymbolSearch onSelect={analyzeSymbol} isLoading={loading} />
-        <div className="flex gap-2">
+        <div className="flex gap-1 sm:gap-2">
           <button
             onClick={() => setActiveTab("analyze")}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            className={`flex-1 sm:flex-none px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
               activeTab === "analyze"
                 ? "bg-blue-600 text-white"
                 : "bg-gray-800 text-gray-400 hover:text-white"
             }`}
           >
-            Single Stock Analysis
+            <span className="hidden sm:inline">Single Stock Analysis</span>
+            <span className="sm:hidden">Analyze</span>
           </button>
           <button
             onClick={() => {
               if (screenLoading) {
-                // Screening in progress — switch to tab to see progress bar
                 setActiveTab("screen");
               } else if (screenerData) {
-                // Results exist — just switch to the tab
                 setActiveTab("screen");
               } else {
                 runScreener();
               }
             }}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            className={`flex-1 sm:flex-none px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
               activeTab === "screen"
                 ? "bg-blue-600 text-white"
                 : "bg-gray-800 text-gray-400 hover:text-white"
             }`}
           >
-            {screenLoading ? "Screening..." : "Screen Top Stocks"}
+            <span className="hidden sm:inline">{screenLoading ? "Screening..." : "Screen Top Stocks"}</span>
+            <span className="sm:hidden">{screenLoading ? "Screening..." : "Screen"}</span>
           </button>
           {activeTab === "screen" && screenerData && !screenLoading && (
             <button
               onClick={runScreener}
-              className="px-3 py-2 rounded-lg text-sm font-medium bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white transition-colors flex items-center gap-1.5"
+              className="px-2 sm:px-3 py-2 rounded-lg text-xs sm:text-sm font-medium bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white transition-colors flex items-center gap-1.5"
               title="Re-run screener with fresh data"
             >
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-              Refresh
+              <span className="hidden sm:inline">Refresh</span>
             </button>
           )}
           <button
             onClick={() => setActiveTab("trades")}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            className={`flex-1 sm:flex-none px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
               activeTab === "trades"
                 ? "bg-green-600 text-white"
                 : "bg-gray-800 text-gray-400 hover:text-white"

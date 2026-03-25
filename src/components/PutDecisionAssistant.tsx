@@ -136,7 +136,7 @@ export default function PutDecisionAssistant({ data }: Props) {
               <h4 className="text-xs font-medium text-gray-500 uppercase mb-2">
                 Suggested Strike Targets
               </h4>
-              <div className="grid grid-cols-3 gap-2 text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
                 {[
                   {
                     label: "Conservative",
