@@ -177,109 +177,84 @@ export default function ScreenerResults({
             className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden"
           >
             <div
-              className="flex items-center justify-between p-3 cursor-pointer hover:bg-gray-800/80 transition-colors"
+              className="p-3 cursor-pointer hover:bg-gray-800/80 transition-colors"
               onClick={() =>
                 setExpandedSymbol(isExpanded ? null : stock.symbol)
               }
             >
-              <div className="flex items-center gap-4 min-w-0">
-                {/* Verdict indicator */}
-                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${vc.bg} ${vc.color} border ${vc.border} shrink-0`}>
-                  {vc.icon}
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-white font-bold text-lg">
-                      {stock.symbol}
-                    </span>
-                    <span className="text-gray-400 text-sm truncate">
-                      {stock.quote.name}
-                    </span>
-                    <span
-                      className={`text-sm ${
-                        isUp ? "text-green-400" : "text-red-400"
-                      }`}
-                    >
-                      ${stock.quote.price.toFixed(2)} ({isUp ? "+" : ""}
-                      {stock.quote.changePercent.toFixed(2)}%)
-                    </span>
+              {/* Row 1: Symbol, name, price, expand arrow */}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${vc.bg} ${vc.color} border ${vc.border} shrink-0`}>
+                    {vc.icon}
                   </div>
-                  {/* Checklist flags */}
-                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${flagColors[summary.verdict === "SELL PUT" ? "pass" : summary.verdict === "AVOID" ? "fail" : "warn"]}`}>
-                      {summary.passes}/{summary.items.length} pass
-                    </span>
-                    {summary.flags.map((flag, i) => (
-                      <span
-                        key={i}
-                        className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${flagColors[flag.status]}`}
-                      >
-                        {flag.short}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
+                      <span className="text-white font-bold text-base sm:text-lg">
+                        {stock.symbol}
                       </span>
-                    ))}
+                      <span className="text-gray-400 text-xs sm:text-sm truncate hidden sm:inline">
+                        {stock.quote.name}
+                      </span>
+                      <span className={`text-xs sm:text-sm whitespace-nowrap ${isUp ? "text-green-400" : "text-red-400"}`}>
+                        ${stock.quote.price.toFixed(2)} ({isUp ? "+" : ""}{stock.quote.changePercent.toFixed(2)}%)
+                      </span>
+                    </div>
                   </div>
                 </div>
+                <span className="text-gray-500 shrink-0">{isExpanded ? "\u25B2" : "\u25BC"}</span>
               </div>
 
-              <div className="flex items-center gap-4 shrink-0">
-                <div className="text-right">
-                  <div className="text-xs text-gray-500">Best Score</div>
-                  <div
-                    className={`font-bold ${
-                      topPut.score >= 75
-                        ? "text-green-400"
-                        : topPut.score >= 55
-                        ? "text-blue-400"
-                        : "text-yellow-400"
-                    }`}
-                  >
+              {/* Row 2: Stats + flags + analyze button */}
+              <div className="flex items-center justify-between gap-2 mt-2 pl-9 sm:pl-11">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${flagColors[summary.verdict === "SELL PUT" ? "pass" : summary.verdict === "AVOID" ? "fail" : "warn"]}`}>
+                    {summary.passes}/{summary.items.length} pass
+                  </span>
+                  {summary.flags.map((flag, fi) => (
+                    <span key={fi} className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${flagColors[flag.status]}`}>
+                      {flag.short}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+                  <div className="text-right hidden sm:block">
+                    <div className="text-xs text-gray-500">Score</div>
+                    <div className={`font-bold ${topPut.score >= 75 ? "text-green-400" : topPut.score >= 55 ? "text-blue-400" : "text-yellow-400"}`}>
+                      {topPut.score.toFixed(0)}
+                    </div>
+                  </div>
+                  <div className="text-right hidden sm:block">
+                    <div className="text-xs text-gray-500">Stability</div>
+                    <div className={`font-medium ${stock.stability.score >= 70 ? "text-green-400" : stock.stability.score >= 50 ? "text-yellow-400" : "text-red-400"}`}>
+                      {stock.stability.score.toFixed(0)}
+                    </div>
+                  </div>
+                  <div className="text-right hidden md:block">
+                    <div className="text-xs text-gray-500">HV Rank</div>
+                    <div className={`font-medium ${stock.ivRank >= 50 ? "text-green-400" : stock.ivRank >= 30 ? "text-yellow-400" : "text-gray-400"}`}>
+                      {stock.ivRank.toFixed(0)}%
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-gray-500">Return</div>
+                    <div className="text-green-400 font-medium">
+                      {topPut.annualizedReturn.toFixed(1)}%
+                    </div>
+                  </div>
+                  {/* Mobile: show score inline */}
+                  <span className={`sm:hidden text-sm font-bold ${topPut.score >= 75 ? "text-green-400" : topPut.score >= 55 ? "text-blue-400" : "text-yellow-400"}`}>
                     {topPut.score.toFixed(0)}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-xs text-gray-500">Stability</div>
-                  <div
-                    className={`font-medium ${
-                      stock.stability.score >= 70
-                        ? "text-green-400"
-                        : stock.stability.score >= 50
-                        ? "text-yellow-400"
-                        : "text-red-400"
-                    }`}
+                  </span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onAnalyze(stock.symbol); }}
+                    className="px-2 sm:px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
                   >
-                    {stock.stability.score.toFixed(0)}
-                  </div>
+                    <span className="hidden sm:inline">Full Analysis</span>
+                    <span className="sm:hidden">Analyze</span>
+                  </button>
                 </div>
-                <div className="text-right">
-                  <div className="text-xs text-gray-500">HV Rank</div>
-                  <div
-                    className={`font-medium ${
-                      stock.ivRank >= 50
-                        ? "text-green-400"
-                        : stock.ivRank >= 30
-                        ? "text-yellow-400"
-                        : "text-gray-400"
-                    }`}
-                  >
-                    {stock.ivRank.toFixed(0)}%
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-xs text-gray-500">Ann. Return</div>
-                  <div className="text-green-400 font-medium">
-                    {topPut.annualizedReturn.toFixed(1)}%
-                  </div>
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onAnalyze(stock.symbol);
-                  }}
-                  className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
-                >
-                  Full Analysis
-                </button>
-                <span className="text-gray-500">{isExpanded ? "\u25B2" : "\u25BC"}</span>
               </div>
             </div>
 
@@ -293,7 +268,7 @@ export default function ScreenerResults({
                       {summary.passes} pass, {summary.warns} caution, {summary.fails} fail
                     </span>
                   </div>
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-1.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-1.5">
                     {summary.items.map((item, idx) => (
                       <div key={idx} className="flex items-center gap-1.5 text-xs">
                         <span className={`font-bold ${

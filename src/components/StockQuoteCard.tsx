@@ -49,11 +49,11 @@ export default function StockQuoteCard({ quote, hv }: StockQuoteCardProps) {
     <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-4">
       <div className="flex items-start justify-between mb-4">
         <div>
-          <h2 className="text-2xl font-bold text-white">{quote.symbol}</h2>
+          <h2 className="text-xl sm:text-2xl font-bold text-white">{quote.symbol}</h2>
           <p className="text-sm text-gray-400">{quote.name}</p>
         </div>
         <div className="text-right">
-          <div className="text-3xl font-bold text-white">
+          <div className="text-2xl sm:text-3xl font-bold text-white">
             ${quote.price.toFixed(2)}
           </div>
           <div
